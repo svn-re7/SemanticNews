@@ -1,1 +1,1 @@
-"""Embedding model package placeholders."""
+"""Embedding model implementations for semantic search."""

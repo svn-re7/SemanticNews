@@ -14,7 +14,7 @@ class Config:
     # Строка подключения для SQLAlchemy
     SQLALCHEMY_DATABASE_URI = f"sqlite:///{DATABASE_PATH}"
 
-    # Параметры для компонентов поиска и ML (зарезервированы для будущего расширения)
+    # Параметры для компонентов поиска и адаптации embedding-модели
     FAISS_INDEX_PATH = BASE_DIR / "instance" / "news.index"  # Путь к индекс-файлу FAISS для поиска
-    EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"  # Название модели эмбеддингов
-    CLASSIFIER_MODEL_NAME = "distilbert-base-uncased"  # Название модели классификации
+    EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"  # Базовая embedding-модель
+    ADAPTED_EMBEDDING_MODEL_DIR = BASE_DIR / "instance" / "models" / "news-embeddings"  # Каталог локально дообученной модели
