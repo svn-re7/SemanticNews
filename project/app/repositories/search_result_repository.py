@@ -1,0 +1,1 @@
+"""Search result repository placeholders."""

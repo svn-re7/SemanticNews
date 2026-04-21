@@ -1,0 +1,36 @@
+# Local environments
+.venv/
+venv/
+.env
+.env.*
+
+# IDE and editor files
+.idea/
+.vscode/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Runtime data
+project/instance/app.db
+project/instance/news.index
+project/instance/*.db
+project/instance/*.index
+
+# Project-local assistant docs
+AGENTS.md
+TECHNICAL_CONTEXT.md
+PROJECT_STRUCTURE.md
+START_HERE.md
+.cursor/
