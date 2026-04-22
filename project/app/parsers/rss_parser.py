@@ -1,1 +1,1 @@
-"""RSS parser placeholders."""
+"""Заглушка RSS-парсера."""
