@@ -1,58 +1,66 @@
-# Откладывает вычисление аннотаций типов, чтобы корректно работали ссылки вперед.
 from __future__ import annotations
 
-# Типы для аннотаций сигнатур методов.
-from typing import List, Optional
+from typing import Optional
 
-# Конструктор SQL-запроса SELECT из SQLAlchemy.
 from sqlalchemy import select
 
-# ORM-сущность, представляющая запись статьи в БД.
+from app.models.dto import ArticleCreateDTO
 from app.models.entities import Article
-# Фабрика/контекстный менеджер сессии для работы с БД.
-from app.orm import get_session
+from app.orm import get_session, session_scope
 
 
 class NewsRepository:
-    """Репозиторий для операций чтения/сохранения новостных статей."""
+    """Репозиторий для операций чтения и сохранения статей."""
 
-    def add_news(self, article: Article) -> int:
-        """Сохранить статью и вернуть сгенерированный ID."""
-        # Открываем область сессии/транзакции БД.
-        with get_session() as session:
-            # Добавляем объект статьи в сессию для вставки.
+    def create(self, article_data: ArticleCreateDTO) -> int:
+        """Создать новую статью в базе данных и вернуть ее идентификатор."""
+        # Репозиторий получает DTO, а ORM-объект создает уже внутри себя.
+        article = Article(
+            source_id=article_data.source_id,
+            article_type_id=article_data.article_type_id,
+            direct_url=article_data.direct_url,
+            title=article_data.title,
+            text=article_data.text,
+            published_at=article_data.published_at,
+            added_at=article_data.added_at,
+        )
+
+        # Для записи используем транзакционный контекст с commit/rollback.
+        with session_scope() as session:
             session.add(article)
-            # Принудительно отправляем SQL, чтобы сразу получить автосгенерированный PK.
+            # flush нужен, чтобы база выдала id еще до завершения блока.
             session.flush()
-            # Возвращаем первичный ключ, присвоенный базой данных.
-            return article.article_id
+            return article.id
 
-    def get_news_by_id(self, news_id: int) -> Optional[Article]:
-        """Вернуть статью по ID или None, если запись не найдена."""
-        # Открываем сессию БД для чтения.
+    def get_by_id(self, article_id: int) -> Optional[Article]:
+        """Вернуть статью по id или None, если запись не найдена."""
         with get_session() as session:
-            # Формируем SELECT ... WHERE article_id = :news_id
-            stmt = select(Article).where(Article.article_id == news_id)
-            # Получаем 0 или 1 запись и преобразуем в ORM-объект или None.
-            result = session.execute(stmt).scalar_one_or_none()
-            # Возвращаем найденную статью (или None).
-            return result
+            stmt = select(Article).where(Article.id == article_id)
+            return session.execute(stmt).scalar_one_or_none()
 
-    def search_news(self, query: str, limit: int = 10) -> List[Article]:
-        """Поиск статей по заголовку/тексту через регистронезависимый ILIKE."""
-        # Оборачиваем запрос в wildcard-шаблон для поиска по подстроке.
-        pattern = f"%{query}%"
-        # Открываем сессию БД для выполнения поиска.
+    def get_by_direct_url(self, direct_url: str) -> Optional[Article]:
+        """Вернуть статью по прямому URL или None, если такой записи нет."""
         with get_session() as session:
-            # Собираем запрос: title ILIKE pattern ИЛИ text ILIKE pattern + лимит строк.
+            stmt = select(Article).where(Article.direct_url == direct_url)
+            return session.execute(stmt).scalar_one_or_none()
+
+    def list_articles(self, limit: int, offset: int = 0) -> list[Article]:
+        """Вернуть список статей с сортировкой по дате публикации от новых к старым."""
+        with get_session() as session:
             stmt = (
                 select(Article)
-                .where(
-                    (Article.title.ilike(pattern)) | (Article.text.ilike(pattern))
-                )
+                .order_by(Article.published_at.desc(), Article.id.desc())
                 .limit(limit)
+                .offset(offset)
             )
-            # Выполняем запрос и получаем все подходящие ORM-объекты.
-            result = session.execute(stmt).scalars().all()
-            # Возвращаем обычный Python-список объектов Article.
-            return list(result)
+            return list(session.execute(stmt).scalars().all())
+
+    def get_by_ids(self, article_ids: list[int]) -> list[Article]:
+        """Вернуть список статей по набору идентификаторов."""
+        # Если список пустой, запрос в базу делать не нужно.
+        if not article_ids:
+            return []
+
+        with get_session() as session:
+            stmt = select(Article).where(Article.id.in_(article_ids))
+            return list(session.execute(stmt).scalars().all())

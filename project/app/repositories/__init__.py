@@ -1,1 +1,1 @@
-"""Data access repositories package."""
+"""Пакет репозиториев доступа к данным."""
