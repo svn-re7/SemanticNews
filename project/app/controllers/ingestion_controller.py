@@ -1,1 +1,1 @@
-"""Ingestion controller placeholders."""
+"""Заглушка контроллера ingestion."""

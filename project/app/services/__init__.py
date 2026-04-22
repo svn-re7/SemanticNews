@@ -1,1 +1,1 @@
-"""Business services package."""
+"""Пакет прикладных сервисов."""

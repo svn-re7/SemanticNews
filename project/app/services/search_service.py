@@ -1,1 +1,1 @@
-"""Search service placeholders."""
+"""Заглушка сервиса поиска."""

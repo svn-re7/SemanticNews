@@ -1,1 +1,1 @@
-"""Embedding service placeholders."""
+"""Заглушка сервиса эмбеддингов."""

@@ -1,1 +1,1 @@
-"""Search controller placeholders."""
+"""Заглушка контроллера поиска."""

@@ -1,1 +1,1 @@
-"""Ingestion service placeholders."""
+"""Заглушка сервиса ingestion."""

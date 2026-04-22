@@ -1,37 +1,90 @@
-# SemanticNews Starter Scaffold
+# SemanticNews
 
-SemanticNews is a clean starter scaffold for a desktop-oriented semantic news search app.
-It includes a Flask backend, Jinja2 templates, Bootstrap UI base, and a pywebview desktop launcher.
+`SemanticNews` — локальное десктопное приложение для накопления, хранения и последующего семантического поиска новостей.
 
-## What is included
+Текущий стек проекта:
 
-- Flask application factory structure
-- Controller, service, repository, and model placeholders
-- One working health endpoint: `GET /health` -> `{"status": "ok"}`
-- Starter HTML templates and static assets
-- Desktop launcher via pywebview
+- backend: `Flask`
+- интерфейс: `HTML + Jinja2 + Bootstrap`
+- desktop-оболочка: `pywebview`
+- хранилище данных: `SQLite`
+- ORM: `SQLAlchemy`
+- парсинг статей: `requests`, `BeautifulSoup`, `trafilatura`, `htmldate`
+- будущий семантический поиск: `sentence-transformers` + `FAISS`
 
-## Install dependencies
+## Что уже есть
 
-```bash
-pip install -r requirements.txt
+- Flask application factory в `app/__init__.py`
+- запуск web-версии через `run.py`
+- запуск desktop-версии через `webview_app.py`
+- ORM-сущности и базовые репозитории для работы с `SQLite`
+- внутренняя структура `controller -> service -> repository -> model`
+- parser package в `app/parsers` для sitemap/html-сценария
+- базовые шаблоны и static-файлы интерфейса
+
+## Что пока не доведено
+
+- интегрированный `ingestion_service`
+- сохранение новостей из parser pipeline в `SQLite` по полному рабочему сценарию
+- пользовательский интерфейс просмотра новостей
+- рабочий `FAISS`-индекс
+- пользовательский семантический поиск
+- адаптация embedding-модели под новостной домен
+- финальная сборка desktop-приложения
+
+## Структура проекта
+
+```text
+project/
+  app/
+    controllers/
+    services/
+    repositories/
+    models/
+    parsers/
+    ml/
+    templates/
+    static/
+  instance/
+  run.py
+  webview_app.py
 ```
 
-## Run Flask app
+Коротко по слоям:
 
-```bash
-python run.py
+- `controllers` — HTTP-маршруты Flask
+- `services` — прикладные сценарии
+- `repositories` — доступ к `SQLite` через ORM
+- `models` — ORM-сущности, DTO и интерфейсы
+- `parsers` — получение и извлечение внешнего контента
+- `ml` — embedding-модели, их адаптация и связанная логика
+
+## Запуск
+
+Используй проектное виртуальное окружение:
+
+```powershell
+.\.venv\Scripts\python.exe run.py
 ```
 
-Then open `http://127.0.0.1:5000` in your browser.
+После этого приложение будет доступно по адресу:
 
-## Launch desktop version (pywebview)
-
-```bash
-python webview_app.py
+```text
+http://127.0.0.1:5000
 ```
 
-## Note
+Для запуска desktop-версии:
 
-Search, scraping, ML inference/classification, and FAISS indexing are intentionally not implemented yet.
-This scaffold is prepared for future expansion with semantic search, ingestion pipelines, and SQLite-backed storage.
+```powershell
+.\.venv\Scripts\python.exe webview_app.py
+```
+
+## Замечание по текущему статусу
+
+Сейчас проект находится между этапами стабилизации data layer и интеграции ingestion pipeline.
+
+Это означает:
+
+- parser и слой данных уже развиты заметно сильнее, чем UI и сервисы верхнего уровня;
+- часть контроллеров и сервисов пока остаются каркасными заглушками;
+- README описывает текущее состояние, а не финальную целевую версию.

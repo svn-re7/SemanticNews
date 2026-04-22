@@ -1,1 +1,1 @@
-"""News controller placeholders."""
+"""Заглушка контроллера новостей."""

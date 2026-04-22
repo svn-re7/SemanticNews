@@ -1,1 +1,1 @@
-"""Indexing service placeholders."""
+"""Заглушка сервиса индексации."""

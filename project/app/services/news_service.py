@@ -1,1 +1,1 @@
-"""News service placeholders."""
+"""Заглушка сервиса новостей."""

@@ -1,1 +1,1 @@
-"""HTTP controllers package."""
+"""Пакет HTTP-контроллеров."""

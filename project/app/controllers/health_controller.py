@@ -6,5 +6,5 @@ health_bp = Blueprint("health", __name__)
 
 @health_bp.get("/health")
 def health_check():
-    """Simple health endpoint to verify app is running."""
+    """Вернуть простой технический статус приложения."""
     return jsonify({"status": "ok"})
