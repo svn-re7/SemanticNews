@@ -9,13 +9,16 @@ PROJECT_DIR = Path(__file__).resolve().parents[1] / "project"
 # Скрипт находится в корне scripts, поэтому явно подключаем пакет приложения.
 sys.path.insert(0, str(PROJECT_DIR))
 
-from app import create_app  # noqa: E402
-from app.models.dto import ReferenceValueCreateDTO, SourceCreateDTO  # noqa: E402
-from app.models.entities import ArticleType, Source, SourceType  # noqa: E402
-from app.orm import session_scope  # noqa: E402
-from app.repositories.article_type_repository import ArticleTypeRepository  # noqa: E402
-from app.repositories.source_repository import SourceRepository  # noqa: E402
-from app.repositories.source_type_repository import SourceTypeRepository  # noqa: E402
+from app import create_app
+from app.models.dto import (
+    ReferenceValueCreateDTO,
+    ReferenceValueUpdateDTO,
+    SourceCreateDTO,
+    SourceSeedUpdateDTO,
+)
+from app.repositories.article_type_repository import ArticleTypeRepository
+from app.repositories.source_repository import SourceRepository
+from app.repositories.source_type_repository import SourceTypeRepository
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,8 +94,8 @@ def main() -> int:
     article_type_repository = ArticleTypeRepository()
     source_repository = SourceRepository()
 
-    source_type_ids = _seed_reference_values(source_type_repository, SourceType, SOURCE_TYPES)
-    article_type_ids = _seed_reference_values(article_type_repository, ArticleType, ARTICLE_TYPES)
+    source_type_ids = _seed_reference_values(source_type_repository, SOURCE_TYPES)
+    article_type_ids = _seed_reference_values(article_type_repository, ARTICLE_TYPES)
 
     # Стартовый источник использует тип news_media, потому что РИА является новостным медиа.
     source_id = _seed_default_source(
@@ -107,7 +110,7 @@ def main() -> int:
     return 0
 
 
-def _seed_reference_values(repository, model_class, items: list[ReferenceSeedItem]) -> dict[str, int]:
+def _seed_reference_values(repository, items: list[ReferenceSeedItem]) -> dict[str, int]:
     """Создать отсутствующие записи справочника и вернуть их id по коду."""
     ids_by_code: dict[str, int] = {}
 
@@ -115,7 +118,7 @@ def _seed_reference_values(repository, model_class, items: list[ReferenceSeedIte
         # Seed должен быть идемпотентным: повторный запуск не создает дубли, а выравнивает существующие значения.
         existing_value = repository.get_by_code(item.code)
         if existing_value is not None:
-            _update_reference_value(model_class, existing_value.id, item)
+            _update_reference_value(repository, existing_value.id, item)
             ids_by_code[item.code] = existing_value.id
             continue
 
@@ -131,16 +134,16 @@ def _seed_reference_values(repository, model_class, items: list[ReferenceSeedIte
     return ids_by_code
 
 
-def _update_reference_value(model_class, value_id: int, item: ReferenceSeedItem) -> None:
+def _update_reference_value(repository, value_id: int, item: ReferenceSeedItem) -> None:
     """Обновить название и описание существующей записи справочника."""
     # Это нужно после ручных запусков из PowerShell, где кириллица могла попасть в БД с неверной кодировкой.
-    with session_scope() as session:
-        value = session.get(model_class, value_id)
-        if value is None:
-            return
-
-        value.name = item.name
-        value.description = item.description
+    repository.update_display_fields(
+        ReferenceValueUpdateDTO(
+            value_id=value_id,
+            name=item.name,
+            description=item.description,
+        )
+    )
 
 
 def _seed_default_source(
@@ -151,7 +154,7 @@ def _seed_default_source(
     """Создать стартовый источник РИА, если он еще не добавлен в БД."""
     existing_source = source_repository.get_by_base_url(DEFAULT_SOURCE_URL)
     if existing_source is not None:
-        _update_default_source(existing_source.id, source_type_id)
+        _update_default_source(source_repository, existing_source.id, source_type_id)
         return existing_source.id
 
     return source_repository.create(
@@ -164,17 +167,21 @@ def _seed_default_source(
     )
 
 
-def _update_default_source(source_id: int, source_type_id: int) -> None:
+def _update_default_source(
+    source_repository: SourceRepository,
+    source_id: int,
+    source_type_id: int,
+) -> None:
     """Обновить стартовый источник, если он уже существовал до запуска seed."""
     # Источник тоже выравниваем, чтобы повторный запуск seed исправлял имя и активность записи.
-    with session_scope() as session:
-        source = session.get(Source, source_id)
-        if source is None:
-            return
-
-        source.source_type_id = source_type_id
-        source.name = DEFAULT_SOURCE_NAME
-        source.is_active = True
+    source_repository.update_seed_data(
+        SourceSeedUpdateDTO(
+            source_id=source_id,
+            source_type_id=source_type_id,
+            name=DEFAULT_SOURCE_NAME,
+            is_active=True,
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ from typing import Optional
 
 from sqlalchemy import select
 
-from app.models.dto import SourceActiveUpdateDTO, SourceCreateDTO
+from app.models.dto import SourceActiveUpdateDTO, SourceCreateDTO, SourceSeedUpdateDTO
 from app.models.entities import Source
 from app.orm import get_session, session_scope
 
@@ -61,6 +61,21 @@ class SourceRepository:
             if source is None:
                 return False
 
+            source.is_active = update_data.is_active
+            return True
+
+    def update_seed_data(self, update_data: SourceSeedUpdateDTO) -> bool:
+        """Обновить поля источника, которые задаются стартовым seed."""
+        with session_scope() as session:
+            stmt = select(Source).where(Source.id == update_data.source_id)
+            source = session.execute(stmt).scalar_one_or_none()
+
+            if source is None:
+                return False
+
+            # Seed может выравнивать только стабильные стартовые поля, не трогая дату последнего ingestion.
+            source.source_type_id = update_data.source_type_id
+            source.name = update_data.name
             source.is_active = update_data.is_active
             return True
 

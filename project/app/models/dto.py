@@ -115,6 +115,20 @@ class SourceActiveUpdateDTO:
 
 
 @dataclass(slots=True)
+class SourceSeedUpdateDTO:
+    """Данные для выравнивания стартового источника при повторном seed."""
+
+    # Идентификатор существующего источника.
+    source_id: int
+    # Идентификатор типа источника из справочника SourceType.
+    source_type_id: int
+    # Человекочитаемое имя источника.
+    name: str
+    # Признак активности источника.
+    is_active: bool
+
+
+@dataclass(slots=True)
 class ReferenceValueCreateDTO:
     """Готовые данные для создания записи в справочнике."""
 
@@ -123,4 +137,16 @@ class ReferenceValueCreateDTO:
     # Человекочитаемое имя значения справочника.
     name: str
     # Дополнительное пояснение значения справочника.
+    description: str | None = None
+
+
+@dataclass(slots=True)
+class ReferenceValueUpdateDTO:
+    """Данные для обновления человекочитаемых полей записи справочника."""
+
+    # Идентификатор существующей записи справочника.
+    value_id: int
+    # Новое человекочитаемое имя.
+    name: str
+    # Новое пояснение значения справочника.
     description: str | None = None

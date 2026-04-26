@@ -4,7 +4,7 @@ from typing import Optional
 
 from sqlalchemy import select
 
-from app.models.dto import ReferenceValueCreateDTO
+from app.models.dto import ReferenceValueCreateDTO, ReferenceValueUpdateDTO
 from app.models.entities import ArticleType
 from app.orm import get_session, session_scope
 
@@ -37,6 +37,20 @@ class ArticleTypeRepository:
         with get_session() as session:
             stmt = select(ArticleType).where(ArticleType.code == code)
             return session.execute(stmt).scalar_one_or_none()
+
+    def update_display_fields(self, update_data: ReferenceValueUpdateDTO) -> bool:
+        """Обновить название и описание типа материала."""
+        with session_scope() as session:
+            stmt = select(ArticleType).where(ArticleType.id == update_data.value_id)
+            article_type = session.execute(stmt).scalar_one_or_none()
+
+            if article_type is None:
+                return False
+
+            # Репозиторий меняет только поля справочника, которые можно безопасно выравнивать через seed.
+            article_type.name = update_data.name
+            article_type.description = update_data.description
+            return True
 
     def list_all(self) -> list[ArticleType]:
         """Вернуть список всех типов материалов."""

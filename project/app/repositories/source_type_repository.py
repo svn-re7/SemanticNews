@@ -4,7 +4,7 @@ from typing import Optional
 
 from sqlalchemy import select
 
-from app.models.dto import ReferenceValueCreateDTO
+from app.models.dto import ReferenceValueCreateDTO, ReferenceValueUpdateDTO
 from app.models.entities import SourceType
 from app.orm import get_session, session_scope
 
@@ -37,6 +37,20 @@ class SourceTypeRepository:
         with get_session() as session:
             stmt = select(SourceType).where(SourceType.code == code)
             return session.execute(stmt).scalar_one_or_none()
+
+    def update_display_fields(self, update_data: ReferenceValueUpdateDTO) -> bool:
+        """Обновить название и описание типа источника."""
+        with session_scope() as session:
+            stmt = select(SourceType).where(SourceType.id == update_data.value_id)
+            source_type = session.execute(stmt).scalar_one_or_none()
+
+            if source_type is None:
+                return False
+
+            # Репозиторий меняет только поля справочника, которые можно безопасно выравнивать через seed.
+            source_type.name = update_data.name
+            source_type.description = update_data.description
+            return True
 
     def list_all(self) -> list[SourceType]:
         """Вернуть список всех типов источников."""
