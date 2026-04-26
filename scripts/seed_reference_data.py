@@ -1,0 +1,181 @@
+from __future__ import annotations
+
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+
+PROJECT_DIR = Path(__file__).resolve().parents[1] / "project"
+# Скрипт находится в корне scripts, поэтому явно подключаем пакет приложения.
+sys.path.insert(0, str(PROJECT_DIR))
+
+from app import create_app  # noqa: E402
+from app.models.dto import ReferenceValueCreateDTO, SourceCreateDTO  # noqa: E402
+from app.models.entities import ArticleType, Source, SourceType  # noqa: E402
+from app.orm import session_scope  # noqa: E402
+from app.repositories.article_type_repository import ArticleTypeRepository  # noqa: E402
+from app.repositories.source_repository import SourceRepository  # noqa: E402
+from app.repositories.source_type_repository import SourceTypeRepository  # noqa: E402
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceSeedItem:
+    """Одна стартовая запись справочника."""
+
+    code: str
+    name: str
+    description: str | None = None
+
+
+SOURCE_TYPES = [
+    ReferenceSeedItem(
+        code="news_media",
+        name="Новостное медиа",
+        description="Обычный новостной сайт или редакционное СМИ.",
+    ),
+    ReferenceSeedItem(
+        code="organization_site",
+        name="Сайт организации",
+        description="Официальный сайт компании, университета или ведомства.",
+    ),
+    ReferenceSeedItem(
+        code="personal_page",
+        name="Персональная страница",
+        description="Личный сайт или публичная страница автора.",
+    ),
+    ReferenceSeedItem(
+        code="telegram_channel",
+        name="Telegram-канал",
+        description="Источник материалов из Telegram, поддержка будет добавлена позже.",
+    ),
+]
+
+ARTICLE_TYPES = [
+    ReferenceSeedItem(
+        code="web_article",
+        name="Веб-статья",
+        description="Обычная HTML-страница со статьей.",
+    ),
+    ReferenceSeedItem(
+        code="telegram_post",
+        name="Пост Telegram",
+        description="Материал из Telegram, поддержка будет добавлена позже.",
+    ),
+    ReferenceSeedItem(
+        code="pdf_document",
+        name="PDF-документ",
+        description="Материал в формате PDF.",
+    ),
+    ReferenceSeedItem(
+        code="presentation",
+        name="Презентация",
+        description="Материал в формате презентации.",
+    ),
+    ReferenceSeedItem(
+        code="other",
+        name="Другое",
+        description="Безопасное значение по умолчанию для неизвестного формата.",
+    ),
+]
+
+DEFAULT_SOURCE_URL = "https://ria.ru/sitemap_article_index.xml"
+DEFAULT_SOURCE_NAME = "РИА Новости"
+
+
+def main() -> int:
+    """Заполнить стартовые справочники и источник для первого ingestion."""
+    # Создаем недостающие таблицы до обращения к репозиториям.
+    create_app()
+
+    source_type_repository = SourceTypeRepository()
+    article_type_repository = ArticleTypeRepository()
+    source_repository = SourceRepository()
+
+    source_type_ids = _seed_reference_values(source_type_repository, SourceType, SOURCE_TYPES)
+    article_type_ids = _seed_reference_values(article_type_repository, ArticleType, ARTICLE_TYPES)
+
+    # Стартовый источник использует тип news_media, потому что РИА является новостным медиа.
+    source_id = _seed_default_source(
+        source_repository=source_repository,
+        source_type_id=source_type_ids["news_media"],
+    )
+
+    print("Seed завершен.")
+    print(f"Типы источников: {source_type_ids}")
+    print(f"Типы материалов: {article_type_ids}")
+    print(f"Стартовый источник: id={source_id}, url={DEFAULT_SOURCE_URL}")
+    return 0
+
+
+def _seed_reference_values(repository, model_class, items: list[ReferenceSeedItem]) -> dict[str, int]:
+    """Создать отсутствующие записи справочника и вернуть их id по коду."""
+    ids_by_code: dict[str, int] = {}
+
+    for item in items:
+        # Seed должен быть идемпотентным: повторный запуск не создает дубли, а выравнивает существующие значения.
+        existing_value = repository.get_by_code(item.code)
+        if existing_value is not None:
+            _update_reference_value(model_class, existing_value.id, item)
+            ids_by_code[item.code] = existing_value.id
+            continue
+
+        created_id = repository.create(
+            ReferenceValueCreateDTO(
+                code=item.code,
+                name=item.name,
+                description=item.description,
+            )
+        )
+        ids_by_code[item.code] = created_id
+
+    return ids_by_code
+
+
+def _update_reference_value(model_class, value_id: int, item: ReferenceSeedItem) -> None:
+    """Обновить название и описание существующей записи справочника."""
+    # Это нужно после ручных запусков из PowerShell, где кириллица могла попасть в БД с неверной кодировкой.
+    with session_scope() as session:
+        value = session.get(model_class, value_id)
+        if value is None:
+            return
+
+        value.name = item.name
+        value.description = item.description
+
+
+def _seed_default_source(
+    *,
+    source_repository: SourceRepository,
+    source_type_id: int,
+) -> int:
+    """Создать стартовый источник РИА, если он еще не добавлен в БД."""
+    existing_source = source_repository.get_by_base_url(DEFAULT_SOURCE_URL)
+    if existing_source is not None:
+        _update_default_source(existing_source.id, source_type_id)
+        return existing_source.id
+
+    return source_repository.create(
+        SourceCreateDTO(
+            source_type_id=source_type_id,
+            base_url=DEFAULT_SOURCE_URL,
+            name=DEFAULT_SOURCE_NAME,
+            is_active=True,
+        )
+    )
+
+
+def _update_default_source(source_id: int, source_type_id: int) -> None:
+    """Обновить стартовый источник, если он уже существовал до запуска seed."""
+    # Источник тоже выравниваем, чтобы повторный запуск seed исправлял имя и активность записи.
+    with session_scope() as session:
+        source = session.get(Source, source_id)
+        if source is None:
+            return
+
+        source.source_type_id = source_type_id
+        source.name = DEFAULT_SOURCE_NAME
+        source.is_active = True
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
