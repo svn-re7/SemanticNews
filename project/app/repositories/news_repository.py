@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from sqlalchemy import select
+from sqlalchemy.orm import joinedload
 
 from app.models.dto import ArticleCreateDTO
 from app.models.entities import Article
@@ -35,7 +36,11 @@ class NewsRepository:
     def get_by_id(self, article_id: int) -> Optional[Article]:
         """Вернуть статью по id или None, если запись не найдена."""
         with get_session() as session:
-            stmt = select(Article).where(Article.id == article_id)
+            stmt = (
+                select(Article)
+                .options(joinedload(Article.source))
+                .where(Article.id == article_id)
+            )
             return session.execute(stmt).scalar_one_or_none()
 
     def get_by_direct_url(self, direct_url: str) -> Optional[Article]:
@@ -49,6 +54,7 @@ class NewsRepository:
         with get_session() as session:
             stmt = (
                 select(Article)
+                .options(joinedload(Article.source))
                 .order_by(Article.published_at.desc(), Article.id.desc())
                 .limit(limit)
                 .offset(offset)

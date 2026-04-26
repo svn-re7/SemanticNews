@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}SemanticNews - Home{% endblock %}
+{% block title %}SemanticNews - Главная{% endblock %}
 
 {% block content %}
 <div class="p-4 bg-light rounded-3 border">
-    <h1 class="display-6">Semantic News Search</h1>
-    <p class="lead mb-0">
-        Starter scaffold for a Flask + pywebview desktop application.
-        Semantic search, ingestion, and ML logic will be added later.
+    <h1 class="display-6">SemanticNews</h1>
+    <p class="lead">
+        Локальное приложение для сбора, хранения и дальнейшего семантического поиска новостей.
     </p>
+    <a class="btn btn-primary" href="{{ url_for('news.news_list') }}">Открыть новости</a>
 </div>
 {% endblock %}

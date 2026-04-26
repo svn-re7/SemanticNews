@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}{{ news_item.title }} - SemanticNews{% endblock %}
+
+{% block content %}
+<article class="mx-auto" style="max-width: 860px;">
+    <div class="mb-4">
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('news.news_list') }}">К списку новостей</a>
+    </div>
+
+    <header class="mb-4">
+        <p class="text-muted mb-2">
+            {{ news_item.source_name }} · {{ news_item.published_at.strftime("%d.%m.%Y %H:%M") }}
+        </p>
+        <h1 class="h2">{{ news_item.title }}</h1>
+    </header>
+
+    <div class="fs-5 lh-lg mb-4">
+        {% for paragraph in news_item.text.splitlines() %}
+            {% if paragraph.strip() %}
+                <p>{{ paragraph }}</p>
+            {% endif %}
+        {% endfor %}
+    </div>
+
+    <a class="btn btn-primary" href="{{ news_item.direct_url }}" target="_blank" rel="noopener">
+        Открыть исходную статью
+    </a>
+</article>
+{% endblock %}

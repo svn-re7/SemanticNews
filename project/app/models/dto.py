@@ -43,6 +43,40 @@ class ArticleCreateDTO:
 
 
 @dataclass(slots=True)
+class NewsListItemDTO:
+    """Краткие данные статьи для списка новостей в интерфейсе."""
+
+    # Идентификатор статьи для перехода на карточку.
+    article_id: int
+    # Заголовок статьи.
+    title: str
+    # Имя источника, из которого получена статья.
+    source_name: str
+    # Дата публикации статьи.
+    published_at: datetime
+    # Короткий фрагмент текста для списка.
+    preview: str
+
+
+@dataclass(slots=True)
+class NewsDetailDTO:
+    """Полные данные статьи для карточки новости."""
+
+    # Идентификатор статьи.
+    article_id: int
+    # Заголовок статьи.
+    title: str
+    # Полный текст статьи.
+    text: str
+    # Прямой URL исходной публикации.
+    direct_url: str
+    # Имя источника, из которого получена статья.
+    source_name: str
+    # Дата публикации статьи.
+    published_at: datetime
+
+
+@dataclass(slots=True)
 class SearchQueryDTO:
     """Входные данные для сценария семантического поиска."""
 
