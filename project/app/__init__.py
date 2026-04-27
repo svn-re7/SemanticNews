@@ -3,6 +3,7 @@ from flask import Flask
 from app.config import Config
 from app.controllers.health_controller import health_bp
 from app.controllers.news_controller import news_bp
+from app.controllers.search_controller import search_bp
 from app.extensions import init_extensions
 
 
@@ -19,6 +20,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     # Регистрируем blueprint для эндпоинов
     app.register_blueprint(health_bp)
     app.register_blueprint(news_bp)
+    app.register_blueprint(search_bp)
 
     # Главная страница приложения
     @app.get("/")

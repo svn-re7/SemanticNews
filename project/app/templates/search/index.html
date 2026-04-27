@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block title %}Семантический поиск - SemanticNews{% endblock %}
+
+{% block content %}
+<section class="mx-auto" style="max-width: 920px;">
+    <div class="mb-4">
+        <h1 class="h3 mb-2">Семантический поиск</h1>
+        <p class="text-muted mb-0">
+            Введите запрос обычным языком. Приложение построит embedding запроса, найдет близкие статьи в FAISS
+            и вернет полные данные из SQLite.
+        </p>
+    </div>
+
+    <form class="card card-body mb-4" method="get" action="{{ url_for('search.search_page') }}">
+        <label class="form-label" for="search-query">Запрос</label>
+        <div class="input-group">
+            <input
+                class="form-control"
+                id="search-query"
+                name="q"
+                type="search"
+                value="{{ query_text }}"
+                placeholder="Например: экономика, спорт, международные новости"
+                autocomplete="off"
+            >
+            <button class="btn btn-primary" type="submit">Найти</button>
+        </div>
+    </form>
+
+    {% if error_message %}
+        <div class="alert alert-warning">
+            {{ error_message }}
+        </div>
+    {% endif %}
+
+    {% if search_result %}
+        <div class="d-flex align-items-center justify-content-between mb-3">
+            <h2 class="h5 mb-0">Результаты по запросу «{{ search_result.query_text }}»</h2>
+            <span class="text-muted small">request_id={{ search_result.request_id }}</span>
+        </div>
+
+        {% if search_result.items %}
+            <div class="list-group">
+                {% for item in search_result.items %}
+                    <a class="list-group-item list-group-item-action py-3" href="{{ url_for('news.news_detail', article_id=item.article_id) }}">
+                        <div class="d-flex w-100 justify-content-between gap-3">
+                            <h3 class="h5 mb-1">{{ item.position }}. {{ item.title }}</h3>
+                            <small class="text-muted text-nowrap">{{ item.published_at.strftime("%d.%m.%Y %H:%M") }}</small>
+                        </div>
+                        <div class="d-flex flex-wrap gap-3 text-secondary small">
+                            <span>{{ item.source_name }}</span>
+                            <span>relevance={{ "%.4f"|format(item.relevance) }}</span>
+                        </div>
+                    </a>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="alert alert-secondary">
+                По этому запросу ничего не найдено. Проверьте, что в базе есть статьи и FAISS-индекс пересобран.
+            </div>
+        {% endif %}
+    {% elif query_text and not error_message %}
+        <div class="alert alert-secondary">
+            Поиск не вернул результатов.
+        </div>
+    {% endif %}
+</section>
+{% endblock %}
