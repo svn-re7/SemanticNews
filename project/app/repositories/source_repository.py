@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import select
+from sqlalchemy.orm import joinedload
 
 from app.models.dto import SourceActiveUpdateDTO, SourceCreateDTO, SourceSeedUpdateDTO
 from app.models.entities import Source
@@ -33,7 +34,11 @@ class SourceRepository:
     def get_by_id(self, source_id: int) -> Optional[Source]:
         """Вернуть источник по id или None, если запись не найдена."""
         with get_session() as session:
-            stmt = select(Source).where(Source.id == source_id)
+            stmt = (
+                select(Source)
+                .options(joinedload(Source.source_type))
+                .where(Source.id == source_id)
+            )
             return session.execute(stmt).scalar_one_or_none()
 
     def get_by_base_url(self, base_url: str) -> Optional[Source]:
@@ -45,7 +50,11 @@ class SourceRepository:
     def list_sources(self, only_active: bool = False) -> list[Source]:
         """Вернуть список источников с возможной фильтрацией только по активным."""
         with get_session() as session:
-            stmt = select(Source).order_by(Source.name.asc(), Source.id.asc())
+            stmt = (
+                select(Source)
+                .options(joinedload(Source.source_type))
+                .order_by(Source.name.asc(), Source.id.asc())
+            )
 
             if only_active:
                 stmt = stmt.where(Source.is_active.is_(True))

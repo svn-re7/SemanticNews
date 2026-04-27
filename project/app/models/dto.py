@@ -193,6 +193,44 @@ class SourceSeedUpdateDTO:
 
 
 @dataclass(slots=True)
+class SourceListItemDTO:
+    """Данные одного источника для страницы управления источниками."""
+
+    # Идентификатор источника.
+    source_id: int
+    # Человекочитаемое имя источника.
+    name: str
+    # Базовый URL или sitemap URL источника.
+    base_url: str
+    # Название типа источника из справочника.
+    source_type_name: str
+    # Используется ли источник в ingestion и поиске.
+    is_active: bool
+    # Время последнего успешного или последнего запущенного ingestion.
+    last_indexed_at: datetime | None
+
+
+@dataclass(slots=True)
+class SourceTypeOptionDTO:
+    """Вариант типа источника для выпадающего списка."""
+
+    # Идентификатор типа источника.
+    source_type_id: int
+    # Название типа источника для UI.
+    name: str
+
+
+@dataclass(slots=True)
+class SourceManagementPageDTO:
+    """Данные страницы управления источниками."""
+
+    # Существующие источники.
+    sources: list[SourceListItemDTO]
+    # Доступные типы источников для формы добавления.
+    source_types: list[SourceTypeOptionDTO]
+
+
+@dataclass(slots=True)
 class ReferenceValueCreateDTO:
     """Готовые данные для создания записи в справочнике."""
 
