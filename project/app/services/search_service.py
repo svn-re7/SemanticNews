@@ -14,7 +14,7 @@ from app.models.dto import (
     SearchResultCreateDTO,
     SearchResultItemDTO,
 )
-from app.models.entities import Article
+from app.models.entities import Article, SearchResult
 from app.repositories.news_repository import NewsRepository
 from app.repositories.request_repository import RequestRepository
 from app.repositories.search_result_repository import SearchResultRepository
@@ -100,6 +100,27 @@ class SearchService:
 
         return SearchResponseDTO(request_id=request_id, query_text=normalized_query, items=items)
 
+    def get_saved_results(self, request_id: int) -> SearchResponseDTO:
+        """Вернуть ранее сохраненную поисковую выдачу без повторного FAISS-поиска."""
+        request = self.request_repository.get_by_id(request_id)
+        if request is None:
+            raise ValueError(f"Поисковый запрос с id={request_id} не найден.")
+
+        # Здесь принципиально не строим embedding и не читаем FAISS: выдача уже сохранена в SQLite.
+        saved_results = self.search_result_repository.list_by_request_id(request_id)
+        saved_article_ids = [saved_result.article_id for saved_result in saved_results]
+        articles_by_id = self._load_articles_by_id(saved_article_ids)
+        items = self._build_saved_result_items(
+            saved_results=saved_results,
+            articles_by_id=articles_by_id,
+        )
+
+        return SearchResponseDTO(
+            request_id=request.id,
+            query_text=request.query_text,
+            items=items,
+        )
+
     def _read_index(self):
         """Прочитать FAISS-индекс с диска."""
         if not self.index_path.exists():
@@ -180,6 +201,33 @@ class SearchService:
                     published_at=article.published_at,
                     relevance=relevance,
                     position=position,
+                )
+            )
+        return items
+
+    def _build_saved_result_items(
+        self,
+        *,
+        saved_results: list[SearchResult],
+        articles_by_id: dict[int, Article],
+    ) -> list[SearchResultItemDTO]:
+        """Собрать DTO выдачи из сохраненных SearchResult-строк."""
+        items: list[SearchResultItemDTO] = []
+        for saved_result in saved_results:
+            article = articles_by_id.get(saved_result.article_id)
+            if article is None:
+                # Если статья была удалена, сохраненный результат больше нельзя показать корректно.
+                continue
+
+            items.append(
+                SearchResultItemDTO(
+                    article_id=article.id,
+                    title=article.title,
+                    direct_url=article.direct_url,
+                    source_name=article.source.name if article.source is not None else "unknown",
+                    published_at=article.published_at,
+                    relevance=saved_result.relevance,
+                    position=saved_result.position,
                 )
             )
         return items

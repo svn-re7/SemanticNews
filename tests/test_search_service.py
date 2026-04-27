@@ -15,7 +15,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1] / "project"
 sys.path.insert(0, str(PROJECT_DIR))
 
 from app.models.dto import SearchResultCreateDTO  # noqa: E402
-from app.models.entities import Article, Source  # noqa: E402
+from app.models.entities import Article, Request, SearchResult, Source  # noqa: E402
 from app.services.search_service import SearchService  # noqa: E402
 
 
@@ -41,25 +41,35 @@ class FakeNewsRepository:
 class FakeRequestRepository:
     """Тестовый репозиторий поисковых запросов."""
 
-    def __init__(self) -> None:
+    def __init__(self, saved_request: Request | None = None) -> None:
         self.created_query_text: str | None = None
+        self.saved_request = saved_request
 
     def create(self, query_data) -> int:
         """Запомнить созданный запрос и вернуть стабильный id."""
         self.created_query_text = query_data.query_text
         return 77
 
+    def get_by_id(self, request_id: int) -> Request | None:
+        """Вернуть сохраненный тестовый запрос по id."""
+        return self.saved_request if self.saved_request and self.saved_request.id == request_id else None
+
 
 class FakeSearchResultRepository:
     """Тестовый репозиторий результатов поиска."""
 
-    def __init__(self) -> None:
+    def __init__(self, saved_results: list[SearchResult] | None = None) -> None:
         self.created_results: list[SearchResultCreateDTO] = []
+        self.saved_results = saved_results or []
 
     def create_many(self, results_data: list[SearchResultCreateDTO]) -> list[int]:
         """Запомнить результаты, которые сервис должен сохранить в БД."""
         self.created_results = results_data
         return [100 + index for index, _ in enumerate(results_data)]
+
+    def list_by_request_id(self, request_id: int) -> list[SearchResult]:
+        """Вернуть сохраненные результаты конкретного запроса."""
+        return [result for result in self.saved_results if result.request_id == request_id]
 
 
 class SearchServiceTest(unittest.TestCase):
@@ -101,6 +111,35 @@ class SearchServiceTest(unittest.TestCase):
                 [(77, 10, 1), (77, 20, 2)],
             )
 
+    def test_get_saved_results_returns_persisted_results_without_embedding_search(self) -> None:
+        """Сохраненная выдача читается из SQLite-слоя без повторного FAISS-поиска."""
+        articles = [
+            self._article(article_id=10, title="Экономика"),
+            self._article(article_id=20, title="Спорт"),
+        ]
+        request = Request(query_text="экономика", executed_at=datetime(2026, 1, 1))
+        request.id = 77
+        saved_results = [
+            self._search_result(request_id=77, article_id=20, relevance=0.7, position=1),
+            self._search_result(request_id=77, article_id=10, relevance=0.5, position=2),
+        ]
+        embedding_service = FailingEmbeddingService()
+
+        service = SearchService(
+            embedding_service=embedding_service,
+            news_repository=FakeNewsRepository(articles),
+            request_repository=FakeRequestRepository(saved_request=request),
+            search_result_repository=FakeSearchResultRepository(saved_results=saved_results),
+        )
+
+        result = service.get_saved_results(77)
+
+        self.assertEqual(result.request_id, 77)
+        self.assertEqual(result.query_text, "экономика")
+        self.assertEqual([item.article_id for item in result.items], [20, 10])
+        self.assertEqual([item.position for item in result.items], [1, 2])
+        self.assertFalse(embedding_service.was_called)
+
     def _write_test_index(self, index_path: Path) -> None:
         """Создать маленький FAISS-индекс для теста поискового сценария."""
         embeddings = np.array(
@@ -136,6 +175,36 @@ class SearchServiceTest(unittest.TestCase):
         article.id = article_id
         article.source = source
         return article
+
+    def _search_result(
+        self,
+        *,
+        request_id: int,
+        article_id: int,
+        relevance: float,
+        position: int,
+    ) -> SearchResult:
+        """Собрать ORM-объект сохраненного результата поиска."""
+        search_result = SearchResult(
+            request_id=request_id,
+            article_id=article_id,
+            relevance=relevance,
+            position=position,
+        )
+        search_result.id = position
+        return search_result
+
+
+class FailingEmbeddingService:
+    """Embedding-сервис, который не должен вызываться при чтении сохраненной выдачи."""
+
+    def __init__(self) -> None:
+        self.was_called = False
+
+    def encode_query(self, query_text: str) -> np.ndarray:
+        """Зафиксировать ошибочный вызов embedding при чтении истории."""
+        self.was_called = True
+        raise AssertionError("Saved results must not call embeddings")
 
 
 if __name__ == "__main__":

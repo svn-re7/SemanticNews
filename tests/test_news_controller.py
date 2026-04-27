@@ -26,11 +26,11 @@ class NewsControllerTest(unittest.TestCase):
         fake_service = FakeNewsService()
 
         with patch("app.controllers.news_controller.NewsService", return_value=fake_service):
-            response = self.client.get("/news/10?return_to=search&search_q=экономика")
+            response = self.client.get("/news/10?return_to=search&request_id=15")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("К результатам поиска", response.text)
-        self.assertIn("/search/?q=", response.text)
+        self.assertIn("/search/results/15", response.text)
 
 
 class FakeNewsService:

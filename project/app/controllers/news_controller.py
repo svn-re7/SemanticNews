@@ -34,8 +34,12 @@ def news_detail(article_id: int):
     return_url = url_for("news.news_list")
     return_label = "К списку новостей"
     if request.args.get("return_to") == "search":
-        search_query = request.args.get("search_q", default="", type=str).strip()
-        return_url = url_for("search.search_page", q=search_query) if search_query else url_for("search.search_page")
+        request_id = request.args.get("request_id", default=None, type=int)
+        return_url = (
+            url_for("search.saved_search_results", request_id=request_id)
+            if request_id is not None
+            else url_for("search.search_page")
+        )
         return_label = "К результатам поиска"
 
     return render_template(

@@ -45,7 +45,7 @@
                 {% for item in search_result.items %}
                     <a
                         class="list-group-item list-group-item-action py-3"
-                        href="{{ url_for('news.news_detail', article_id=item.article_id, return_to='search', search_q=search_result.query_text) }}"
+                        href="{{ url_for('news.news_detail', article_id=item.article_id, return_to='search', request_id=search_result.request_id) }}"
                     >
                         <div class="d-flex w-100 justify-content-between gap-3">
                             <h3 class="h5 mb-1">{{ item.position }}. {{ item.title }}</h3>

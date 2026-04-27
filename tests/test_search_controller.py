@@ -59,8 +59,36 @@ class SearchControllerTest(unittest.TestCase):
         self.assertIn("Экономическая новость", response.text)
         self.assertIn("/news/10", response.text)
         self.assertIn("return_to=search", response.text)
-        self.assertIn("search_q=", response.text)
+        self.assertIn("request_id=15", response.text)
         self.assertIn("0.9100", response.text)
+
+    def test_saved_results_page_uses_request_id_without_new_search(self) -> None:
+        """Страница сохраненной выдачи читает результаты по request_id без нового поиска."""
+        fake_service = FakeSearchService(
+            SearchResponseDTO(
+                request_id=15,
+                query_text="экономика",
+                items=[
+                    SearchResultItemDTO(
+                        article_id=10,
+                        title="Экономическая новость",
+                        direct_url="https://example.test/news",
+                        source_name="Тестовый источник",
+                        published_at=datetime(2026, 1, 1, 12, 0),
+                        relevance=0.91,
+                        position=1,
+                    )
+                ],
+            )
+        )
+
+        with patch("app.controllers.search_controller.SearchService", return_value=fake_service):
+            response = self.client.get("/search/results/15")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(fake_service.saved_request_id, 15)
+        self.assertIsNone(fake_service.last_query)
+        self.assertIn("Экономическая новость", response.text)
 
 
 @dataclass
@@ -70,11 +98,17 @@ class FakeSearchService:
     result: SearchResponseDTO
     last_query: str | None = None
     last_top_k: int | None = None
+    saved_request_id: int | None = None
 
     def search(self, query_text: str, top_k: int) -> SearchResponseDTO:
         """Запомнить аргументы вызова и вернуть заранее подготовленный результат."""
         self.last_query = query_text
         self.last_top_k = top_k
+        return self.result
+
+    def get_saved_results(self, request_id: int) -> SearchResponseDTO:
+        """Запомнить request_id и вернуть сохраненную выдачу."""
+        self.saved_request_id = request_id
         return self.result
 
 

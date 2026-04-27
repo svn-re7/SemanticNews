@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Blueprint, render_template, request
+from flask import Blueprint, abort, render_template, request
 
 from app.models.dto import SearchResponseDTO
 from app.services.search_service import SearchService
@@ -31,4 +31,20 @@ def search_page():
         query_text=query_text,
         search_result=search_result,
         error_message=error_message,
+    )
+
+
+@search_bp.get("/results/<int:request_id>")
+def saved_search_results(request_id: int):
+    """Показать ранее сохраненную выдачу без повторного семантического поиска."""
+    try:
+        search_result = SearchService().get_saved_results(request_id)
+    except ValueError:
+        abort(404)
+
+    return render_template(
+        "search/index.html",
+        query_text=search_result.query_text,
+        search_result=search_result,
+        error_message=None,
     )
