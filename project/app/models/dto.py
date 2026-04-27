@@ -59,6 +59,24 @@ class NewsListItemDTO:
 
 
 @dataclass(slots=True)
+class NewsListPageDTO:
+    """Данные страницы списка новостей с параметрами пагинации."""
+
+    # Новости для текущей страницы.
+    items: list[NewsListItemDTO]
+    # Номер текущей страницы.
+    page: int
+    # Количество статей на странице.
+    per_page: int
+    # Общее количество сохраненных статей.
+    total_items: int
+    # Есть ли предыдущая страница.
+    has_previous: bool
+    # Есть ли следующая страница.
+    has_next: bool
+
+
+@dataclass(slots=True)
 class NewsDetailDTO:
     """Полные данные статьи для карточки новости."""
 

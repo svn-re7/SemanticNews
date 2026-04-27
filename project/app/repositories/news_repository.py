@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import joinedload
 
 from app.models.dto import ArticleCreateDTO
@@ -60,6 +60,12 @@ class NewsRepository:
                 .offset(offset)
             )
             return list(session.execute(stmt).scalars().all())
+
+    def count_articles(self) -> int:
+        """Вернуть общее количество сохраненных статей."""
+        with get_session() as session:
+            stmt = select(func.count(Article.id))
+            return session.execute(stmt).scalar_one()
 
     def get_by_ids(self, article_ids: list[int]) -> list[Article]:
         """Вернуть список статей по набору идентификаторов."""

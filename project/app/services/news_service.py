@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.models.dto import NewsDetailDTO, NewsListItemDTO
+from app.models.dto import NewsDetailDTO, NewsListItemDTO, NewsListPageDTO
 from app.models.entities import Article
 from app.repositories.news_repository import NewsRepository
 
@@ -12,12 +12,26 @@ class NewsService:
         # Репозиторий можно подменить в тестах, а в обычном запуске используется рабочий доступ к SQLite.
         self.news_repository = news_repository if news_repository is not None else NewsRepository()
 
-    def get_news_list(self, *, limit: int = 50, offset: int = 0) -> list[NewsListItemDTO]:
-        """Получить список последних новостей для страницы просмотра."""
-        articles = self.news_repository.list_articles(limit=limit, offset=offset)
+    def get_news_page(self, *, page: int = 1, per_page: int = 20) -> NewsListPageDTO:
+        """Получить одну страницу последних новостей для просмотра."""
+        normalized_page = max(page, 1)
+        normalized_per_page = max(per_page, 1)
+        offset = (normalized_page - 1) * normalized_per_page
+
+        articles = self.news_repository.list_articles(limit=normalized_per_page, offset=offset)
+        total_items = self.news_repository.count_articles()
 
         # Сервис превращает ORM-сущности в DTO, чтобы шаблон не зависел от структуры SQLAlchemy-моделей.
-        return [self._to_list_item(article) for article in articles]
+        items = [self._to_list_item(article) for article in articles]
+
+        return NewsListPageDTO(
+            items=items,
+            page=normalized_page,
+            per_page=normalized_per_page,
+            total_items=total_items,
+            has_previous=normalized_page > 1,
+            has_next=offset + len(items) < total_items,
+        )
 
     def get_news_detail(self, article_id: int) -> NewsDetailDTO | None:
         """Получить данные одной новости для карточки."""

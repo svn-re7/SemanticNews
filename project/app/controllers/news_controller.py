@@ -14,14 +14,12 @@ def news_list():
     # Контроллер читает только параметры HTTP-запроса, а подготовку данных делегирует сервису.
     page = max(request.args.get("page", default=1, type=int), 1)
     per_page = 20
-    offset = (page - 1) * per_page
 
-    news_items = NewsService().get_news_list(limit=per_page, offset=offset)
+    news_page = NewsService().get_news_page(page=page, per_page=per_page)
 
     return render_template(
         "news/list.html",
-        news_items=news_items,
-        page=page,
+        news_page=news_page,
     )
 
 
