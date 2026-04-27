@@ -97,6 +97,8 @@ def collect_extracted_articles_from_sitemap_index(
     *,
     sitemap_limit: int = 5,
     max_articles: int = 10,
+    stop_after_published_at: datetime | None = None,
+    stop_after_old_articles: int = 3,
     session: Session | None = None,
 ) -> list[ExtractedArticle]:
     """Собрать статьи, начиная с sitemap-индекса и заканчивая извлечением HTML-контента."""
@@ -120,7 +122,16 @@ def collect_extracted_articles_from_sitemap_index(
             return []
 
         extracted_articles: list[ExtractedArticle] = []
+        old_articles_in_row = 0
         for article_reference in article_references:
+            if _is_not_newer_than(article_reference.lastmod, stop_after_published_at):
+                old_articles_in_row += 1
+                if old_articles_in_row >= stop_after_old_articles:
+                    # Sitemap у новостных сайтов обычно идет от свежих материалов к старым.
+                    # Несколько старых дат подряд означают, что дальше почти наверняка уже повторы.
+                    break
+                continue
+
             try:
                 article = extract_article(article_reference.url, session=active_session)
             except ParserError as error:
@@ -130,6 +141,13 @@ def collect_extracted_articles_from_sitemap_index(
             if article.published_at is None:
                 article.published_at = article_reference.lastmod
 
+            if _is_not_newer_than(article.published_at, stop_after_published_at):
+                old_articles_in_row += 1
+                if old_articles_in_row >= stop_after_old_articles:
+                    break
+                continue
+
+            old_articles_in_row = 0
             extracted_articles.append(article)
             if len(extracted_articles) >= max_articles:
                 break
@@ -234,3 +252,11 @@ def _parse_sitemap_datetime(value: str | None) -> datetime | None:
         return parsed_datetime.astimezone(timezone.utc).replace(tzinfo=None)
 
     return parsed_datetime
+
+
+def _is_not_newer_than(candidate: datetime | None, threshold: datetime | None) -> bool:
+    """Проверить, что дата статьи не новее даты последнего успешного ingestion."""
+    if candidate is None or threshold is None:
+        return False
+
+    return candidate <= threshold

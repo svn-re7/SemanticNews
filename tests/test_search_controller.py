@@ -58,6 +58,8 @@ class SearchControllerTest(unittest.TestCase):
         self.assertEqual(fake_service.last_top_k, 10)
         self.assertIn("Экономическая новость", response.text)
         self.assertIn("/news/10", response.text)
+        self.assertIn("return_to=search", response.text)
+        self.assertIn("search_q=", response.text)
         self.assertIn("0.9100", response.text)
 
 

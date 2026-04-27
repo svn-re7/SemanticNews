@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}Сбор новостей - SemanticNews{% endblock %}
+
+{% block content %}
+<section class="mx-auto" style="max-width: 860px;">
+    <div class="mb-4">
+        <h1 class="h3 mb-2">Сбор новостей</h1>
+        <p class="text-muted mb-0">
+            Кнопка запускает ingestion для активных источников. Новые статьи сохраняются в SQLite
+            и сразу добавляются в FAISS-индекс.
+        </p>
+    </div>
+
+    <div class="card card-body mb-4">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+            <div>
+                <h2 class="h5 mb-1">Ручной запуск ingestion</h2>
+                <p class="text-muted mb-0">Для MVP используется один фоновый запуск внутри Flask-процесса.</p>
+            </div>
+            <button class="btn btn-primary" id="ingestion-start-button" type="button">
+                Запустить сбор новостей
+            </button>
+        </div>
+    </div>
+
+    <div class="alert alert-secondary" id="ingestion-status" data-status-url="{{ url_for('ingestion.ingestion_status') }}">
+        Статус еще не загружен.
+    </div>
+
+    <form id="ingestion-start-form" method="post" action="{{ url_for('ingestion.start_ingestion') }}"></form>
+</section>
+
+<script>
+(() => {
+    const button = document.querySelector("#ingestion-start-button");
+    const form = document.querySelector("#ingestion-start-form");
+    const statusBlock = document.querySelector("#ingestion-status");
+    const statusUrl = statusBlock.dataset.statusUrl;
+
+    const renderStatus = (data) => {
+        const parts = [data.message];
+        if (data.started_at) {
+            parts.push(`Старт: ${data.started_at}`);
+        }
+        if (data.finished_at) {
+            parts.push(`Финиш: ${data.finished_at}`);
+        }
+        if (data.error) {
+            parts.push(`Ошибка: ${data.error}`);
+        }
+
+        statusBlock.textContent = parts.join(" ");
+        statusBlock.className = data.error ? "alert alert-danger" : data.is_running ? "alert alert-info" : "alert alert-secondary";
+        button.disabled = data.is_running;
+    };
+
+    const loadStatus = async () => {
+        const response = await fetch(statusUrl);
+        renderStatus(await response.json());
+    };
+
+    button.addEventListener("click", async () => {
+        button.disabled = true;
+        const response = await fetch(form.action, { method: "POST" });
+        renderStatus(await response.json());
+    });
+
+    loadStatus();
+    setInterval(loadStatus, 3000);
+})();
+</script>
+{% endblock %}

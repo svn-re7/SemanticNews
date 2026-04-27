@@ -124,6 +124,7 @@ class IngestionService:
             source.base_url,
             sitemap_limit=sitemap_limit,
             max_articles=max_articles,
+            stop_after_published_at=source.last_indexed_at,
         )
         result = IngestionResult(
             source_id=source.id,

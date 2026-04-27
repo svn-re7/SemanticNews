@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Blueprint, abort, render_template, request
+from flask import Blueprint, abort, render_template, request, url_for
 
 from app.services.news_service import NewsService
 
@@ -30,4 +30,17 @@ def news_detail(article_id: int):
     if news_item is None:
         abort(404)
 
-    return render_template("news/detail.html", news_item=news_item)
+    # В desktop-окне нет привычной браузерной стрелки назад, поэтому явно строим ссылку возврата.
+    return_url = url_for("news.news_list")
+    return_label = "К списку новостей"
+    if request.args.get("return_to") == "search":
+        search_query = request.args.get("search_q", default="", type=str).strip()
+        return_url = url_for("search.search_page", q=search_query) if search_query else url_for("search.search_page")
+        return_label = "К результатам поиска"
+
+    return render_template(
+        "news/detail.html",
+        news_item=news_item,
+        return_url=return_url,
+        return_label=return_label,
+    )
