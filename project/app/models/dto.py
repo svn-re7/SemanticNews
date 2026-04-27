@@ -127,6 +127,18 @@ class SearchResultItemDTO:
 
 
 @dataclass(slots=True)
+class SearchResponseDTO:
+    """Итог семантического поиска, готовый для контроллера или CLI."""
+
+    # Идентификатор сохраненного поискового запроса.
+    request_id: int
+    # Нормализованный текст запроса пользователя.
+    query_text: str
+    # Найденные статьи в порядке релевантности.
+    items: list[SearchResultItemDTO]
+
+
+@dataclass(slots=True)
 class SearchResultCreateDTO:
     """Готовые данные для создания записи SearchResult в базе данных."""
 

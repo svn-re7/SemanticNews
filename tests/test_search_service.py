@@ -1,0 +1,142 @@
+from __future__ import annotations
+
+import json
+import sys
+import tempfile
+import unittest
+from datetime import datetime
+from pathlib import Path
+
+import faiss
+import numpy as np
+
+
+PROJECT_DIR = Path(__file__).resolve().parents[1] / "project"
+sys.path.insert(0, str(PROJECT_DIR))
+
+from app.models.dto import SearchResultCreateDTO  # noqa: E402
+from app.models.entities import Article, Source  # noqa: E402
+from app.services.search_service import SearchService  # noqa: E402
+
+
+class FakeEmbeddingService:
+    """Тестовый embedding-сервис, который не загружает реальную ML-модель."""
+
+    def encode_query(self, query_text: str) -> np.ndarray:
+        """Вернуть вектор запроса, ближайший к первой тестовой статье."""
+        return np.array([1.0, 0.0, 0.0], dtype=np.float32)
+
+
+class FakeNewsRepository:
+    """Тестовый репозиторий статей без обращения к SQLite."""
+
+    def __init__(self, articles: list[Article]) -> None:
+        self.articles_by_id = {article.id: article for article in articles}
+
+    def get_by_ids(self, article_ids: list[int]) -> list[Article]:
+        """Вернуть статьи по id, имитируя репозиторий приложения."""
+        return [self.articles_by_id[article_id] for article_id in article_ids]
+
+
+class FakeRequestRepository:
+    """Тестовый репозиторий поисковых запросов."""
+
+    def __init__(self) -> None:
+        self.created_query_text: str | None = None
+
+    def create(self, query_data) -> int:
+        """Запомнить созданный запрос и вернуть стабильный id."""
+        self.created_query_text = query_data.query_text
+        return 77
+
+
+class FakeSearchResultRepository:
+    """Тестовый репозиторий результатов поиска."""
+
+    def __init__(self) -> None:
+        self.created_results: list[SearchResultCreateDTO] = []
+
+    def create_many(self, results_data: list[SearchResultCreateDTO]) -> list[int]:
+        """Запомнить результаты, которые сервис должен сохранить в БД."""
+        self.created_results = results_data
+        return [100 + index for index, _ in enumerate(results_data)]
+
+
+class SearchServiceTest(unittest.TestCase):
+    def test_search_returns_articles_in_faiss_order_and_saves_request_results(self) -> None:
+        """Сервис возвращает статьи в порядке FAISS и сохраняет историю поиска."""
+        articles = [
+            self._article(article_id=10, title="Экономика"),
+            self._article(article_id=20, title="Спорт"),
+        ]
+        request_repository = FakeRequestRepository()
+        result_repository = FakeSearchResultRepository()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            index_path = Path(temp_dir) / "news.index"
+            id_map_path = Path(temp_dir) / "news_index_ids.json"
+            self._write_test_index(index_path)
+            self._write_test_id_map(id_map_path)
+
+            service = SearchService(
+                embedding_service=FakeEmbeddingService(),
+                news_repository=FakeNewsRepository(articles),
+                request_repository=request_repository,
+                search_result_repository=result_repository,
+                index_path=index_path,
+                id_map_path=id_map_path,
+            )
+
+            result = service.search("экономика", top_k=2)
+
+            self.assertEqual(result.request_id, 77)
+            self.assertEqual(result.query_text, "экономика")
+            self.assertEqual([item.article_id for item in result.items], [10, 20])
+            self.assertEqual([item.position for item in result.items], [1, 2])
+            self.assertGreater(result.items[0].relevance, result.items[1].relevance)
+
+            self.assertEqual(request_repository.created_query_text, "экономика")
+            self.assertEqual(
+                [(item.request_id, item.article_id, item.position) for item in result_repository.created_results],
+                [(77, 10, 1), (77, 20, 2)],
+            )
+
+    def _write_test_index(self, index_path: Path) -> None:
+        """Создать маленький FAISS-индекс для теста поискового сценария."""
+        embeddings = np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        index = faiss.IndexFlatIP(3)
+        index.add(embeddings)
+        faiss.write_index(index, str(index_path))
+
+    def _write_test_id_map(self, id_map_path: Path) -> None:
+        """Создать карту соответствия позиций FAISS и id тестовых статей."""
+        id_map_path.write_text(
+            json.dumps({"article_ids": [10, 20], "vector_size": 3, "index_size": 2}),
+            encoding="utf-8",
+        )
+
+    def _article(self, article_id: int, title: str) -> Article:
+        """Собрать минимальную статью с источником для результата поиска."""
+        source = Source(source_type_id=1, base_url="https://example.test", name="Тест", is_active=True)
+        article = Article(
+            source_id=1,
+            article_type_id=1,
+            direct_url=f"https://example.test/{article_id}",
+            title=title,
+            text="Текст новости",
+            published_at=datetime(2026, 1, 1),
+            added_at=datetime(2026, 1, 1),
+        )
+        article.id = article_id
+        article.source = source
+        return article
+
+
+if __name__ == "__main__":
+    unittest.main()

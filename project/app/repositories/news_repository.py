@@ -74,5 +74,9 @@ class NewsRepository:
             return []
 
         with get_session() as session:
-            stmt = select(Article).where(Article.id.in_(article_ids))
+            stmt = (
+                select(Article)
+                .options(joinedload(Article.source))
+                .where(Article.id.in_(article_ids))
+            )
             return list(session.execute(stmt).scalars().all())
