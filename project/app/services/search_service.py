@@ -35,6 +35,7 @@ class SearchService:
         id_map_path: Path | None = None,
     ) -> None:
         # Подменяемые зависимости делают сервис проверяемым без Flask, SQLite и реальной ML-модели.
+        # В обычном запуске сюда ничего не передают, и сервис сам берет реальные зависимости приложения.
         self.embedding_service = embedding_service if embedding_service is not None else EmbeddingService()
         self.news_repository = news_repository if news_repository is not None else NewsRepository()
         self.request_repository = request_repository if request_repository is not None else RequestRepository()
@@ -43,26 +44,33 @@ class SearchService:
             if search_result_repository is not None
             else SearchResultRepository()
         )
+        # Пути тоже можно подменить в тестах, чтобы не трогать рабочие файлы из project/instance.
         self.index_path = index_path if index_path is not None else Config.FAISS_INDEX_PATH
         self.id_map_path = id_map_path if id_map_path is not None else Config.FAISS_ID_MAP_PATH
 
     def search(self, query_text: str, top_k: int = 5) -> SearchResponseDTO:
         """Выполнить семантический поиск и сохранить историю запроса."""
+        # На входе убираем случайные пробелы, чтобы в историю не попадали варианты одного запроса.
         normalized_query = query_text.strip()
         if not normalized_query:
             raise ValueError("Поисковый запрос не должен быть пустым.")
         if top_k <= 0:
             raise ValueError("Количество результатов поиска должно быть положительным.")
 
+        # FAISS и JSON-карта читаются вместе, потому что индекс сам хранит только позиции векторов.
         index = self._read_index()
         article_ids = self._read_article_id_map()
         if index.ntotal != len(article_ids):
             raise ValueError("FAISS-индекс и карта article_id рассинхронизированы.")
 
+        # Текстовый запрос превращаем в embedding того же типа, что и статьи при индексации.
         query_vector = self._prepare_query_vector(self.embedding_service.encode_query(normalized_query))
+        # Нельзя запросить больше результатов, чем реально лежит в индексе.
         distances, positions = index.search(query_vector, min(top_k, index.ntotal))
+        # FAISS возвращает позиции внутри индекса, а не id статей из SQLite.
         found_pairs = self._collect_found_pairs(distances=distances[0], positions=positions[0], article_ids=article_ids)
 
+        # Запрос сохраняем отдельно, чтобы потом можно было показать историю поиска или анализировать выдачу.
         request_id = self.request_repository.create(
             SearchQueryDTO(
                 query_text=normalized_query,
@@ -71,8 +79,10 @@ class SearchService:
             )
         )
 
+        # После FAISS возвращаемся в SQLite: только база хранит заголовки, ссылки, даты и источник.
         found_article_ids = [article_id for article_id, _ in found_pairs]
         articles_by_id = self._load_articles_by_id(found_article_ids)
+        # DTO собираем в порядке FAISS, потому что именно этот порядок отражает релевантность.
         items = self._build_result_items(found_pairs=found_pairs, articles_by_id=articles_by_id)
 
         # Историю поиска сохраняем уже после чтения статей, чтобы в БД не попадали битые позиции индекса.
@@ -94,6 +104,7 @@ class SearchService:
         """Прочитать FAISS-индекс с диска."""
         if not self.index_path.exists():
             raise FileNotFoundError("FAISS-индекс не найден. Сначала выполните scripts/rebuild_index.py.")
+        # FAISS использует свой бинарный формат, поэтому читаем индекс через библиотечную функцию.
         return faiss.read_index(str(self.index_path))
 
     def _read_article_id_map(self) -> list[int]:
@@ -101,16 +112,21 @@ class SearchService:
         if not self.id_map_path.exists():
             raise FileNotFoundError("Карта article_id не найдена. Сначала выполните scripts/rebuild_index.py.")
 
+        # JSON-карта создается indexing_service и должна содержать список article_ids в порядке векторов FAISS.
         payload = json.loads(self.id_map_path.read_text(encoding="utf-8"))
         article_ids = payload.get("article_ids")
         if not isinstance(article_ids, list):
             raise ValueError("Карта article_id имеет неверный формат.")
+        # Приведение к int защищает от ситуации, когда JSON был отредактирован руками и id стали строками.
         return [int(article_id) for article_id in article_ids]
 
     def _prepare_query_vector(self, query_vector: np.ndarray) -> np.ndarray:
         """Подготовить embedding запроса к поиску в FAISS."""
+        # Один пользовательский запрос обычно приходит как одномерный вектор вида (384,).
+        # FAISS ищет пачками, поэтому даже один запрос должен иметь форму (1, 384).
         if query_vector.ndim == 1:
             query_vector = query_vector.reshape(1, -1)
+        # Сервис search() рассчитан на один запрос за раз, а не на batch из нескольких запросов.
         if query_vector.ndim != 2 or query_vector.shape[0] != 1:
             raise ValueError("Embedding запроса должен быть одним вектором.")
 
@@ -130,12 +146,14 @@ class SearchService:
             # FAISS возвращает -1, если результата для позиции нет.
             if position < 0:
                 continue
+            # position — это индекс в JSON-списке, а значение списка — настоящий Article.id из SQLite.
             found_pairs.append((article_ids[int(position)], float(distance)))
         return found_pairs
 
     def _load_articles_by_id(self, article_ids: list[int]) -> dict[int, Article]:
         """Загрузить найденные статьи из SQLite и разложить их по id."""
         articles = self.news_repository.get_by_ids(article_ids)
+        # Словарь нужен, чтобы быстро собрать выдачу в порядке FAISS, а не в порядке ответа базы.
         return {article.id: article for article in articles}
 
     def _build_result_items(
@@ -152,6 +170,7 @@ class SearchService:
                 # Если статья удалена из SQLite после пересборки индекса, пропускаем битую ссылку.
                 continue
 
+            # В DTO кладем только данные, которые нужны контроллеру, CLI или будущему шаблону поиска.
             items.append(
                 SearchResultItemDTO(
                     article_id=article.id,
