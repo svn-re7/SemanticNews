@@ -19,7 +19,10 @@ from app.services.ingestion_service import IngestionResult, IngestionService
 def main() -> int:
     """Запустить ручной сценарий ingestion из командной строки."""
     args = _parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    # Корневой уровень WARNING не дает сторонним библиотекам зашумлять ручной запуск.
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
+    # Логи нашего ingestion-сервиса оставляем на INFO, потому что они полезны для проверки pipeline.
+    logging.getLogger("app.services.ingestion_service").setLevel(logging.INFO)
 
     # Фабрика приложения создает недостающие таблицы через init_extensions().
     create_app()
@@ -87,10 +90,11 @@ def _print_results(results: list[IngestionResult]) -> None:
     for result in results:
         print(
             "Источник {source_id}: найдено={found}, сохранено={saved}, "
-            "дубли={duplicates}, без текста={empty}, без типа={missing_type}".format(
+            "проиндексировано={indexed}, дубли={duplicates}, без текста={empty}, без типа={missing_type}".format(
                 source_id=result.source_id,
                 found=result.found,
                 saved=result.saved,
+                indexed=result.indexed,
                 duplicates=result.skipped_duplicates,
                 empty=result.skipped_empty_text,
                 missing_type=result.skipped_missing_type,

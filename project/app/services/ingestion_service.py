@@ -13,6 +13,7 @@ from app.parsers import ExtractedArticle, collect_extracted_articles_from_sitema
 from app.repositories.article_type_repository import ArticleTypeRepository
 from app.repositories.news_repository import NewsRepository
 from app.repositories.source_repository import SourceRepository
+from app.services.indexing_service import IndexingService
 
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ class IngestionResult:
     skipped_duplicates: int = 0
     skipped_empty_text: int = 0
     skipped_missing_type: int = 0
+    indexed: int = 0
 
 
 class IngestionService:
@@ -40,6 +42,7 @@ class IngestionService:
         source_repository: SourceRepository | None = None,
         news_repository: NewsRepository | None = None,
         article_type_repository: ArticleTypeRepository | None = None,
+        indexing_service: IndexingService | None = None,
         sitemap_parser: Callable[..., list[ExtractedArticle]] | None = None,
     ) -> None:
         # Зависимости можно передать снаружи для тестов, а в обычном запуске сервис сам создает рабочие репозитории.
@@ -51,6 +54,10 @@ class IngestionService:
             article_type_repository
             if article_type_repository is not None
             else ArticleTypeRepository()
+        )
+        # Индексатор отделен от ingestion, но ingestion знает момент, когда появились новые article_id.
+        self.indexing_service = (
+            indexing_service if indexing_service is not None else IndexingService()
         )
         # Парсер тоже оставлен заменяемым, чтобы проверить ingestion без реальных HTTP-запросов к сайтам.
         self.sitemap_parser = (
@@ -125,17 +132,26 @@ class IngestionService:
         )
 
         # Каждая статья проходит одинаковый путь: parser model -> DTO -> проверка правил -> repository -> SQLite.
+        saved_article_ids: list[int] = []
         for extracted_article in extracted_articles:
             parsed_article = self._to_parsed_article(source.base_url, extracted_article)
-            self._save_parsed_article(source, parsed_article, result)
+            saved_article_id = self._save_parsed_article(source, parsed_article, result)
+            if saved_article_id is not None:
+                saved_article_ids.append(saved_article_id)
+
+        if saved_article_ids:
+            # FAISS обновляем после успешных записей в SQLite, потому что article_id появляется только после insert.
+            append_result = self.indexing_service.append_articles_by_ids(saved_article_ids)
+            result.indexed = append_result.articles_count
 
         # Фиксируем время попытки ingestion для источника, чтобы потом можно было показывать его в UI.
         self.source_repository.update_last_indexed_at(source.id, datetime.now())
         logger.info(
-            "Ingestion source_id=%s: найдено=%s, сохранено=%s, дубли=%s, без текста=%s",
+            "Ingestion source_id=%s: найдено=%s, сохранено=%s, проиндексировано=%s, дубли=%s, без текста=%s",
             result.source_id,
             result.found,
             result.saved,
+            result.indexed,
             result.skipped_duplicates,
             result.skipped_empty_text,
         )
@@ -162,23 +178,23 @@ class IngestionService:
         source: Source,
         parsed_article: ParsedArticleDTO,
         result: IngestionResult,
-    ) -> None:
+    ) -> int | None:
         """Проверить статью и сохранить ее, если она проходит правила ingestion."""
         # По архитектурному решению статьи без текста не попадают в базу.
         if not parsed_article.text:
             result.skipped_empty_text += 1
-            return
+            return None
 
         # Дубли отсекаются на уровне сервиса до записи, потому что это бизнес-правило ingestion.
         if self.news_repository.get_by_direct_url(parsed_article.direct_url) is not None:
             result.skipped_duplicates += 1
-            return
+            return None
 
         # В БД хранится ссылка на справочник ArticleType, поэтому код типа нужно превратить в id.
         article_type_id = self._resolve_article_type_id(parsed_article.article_type_code)
         if article_type_id is None:
             result.skipped_missing_type += 1
-            return
+            return None
 
         # Если дата публикации не найдена парсером, подставляем текущее время 
         now = datetime.now()
@@ -194,14 +210,15 @@ class IngestionService:
 
         try:
             # Репозиторий создает ORM-объект и выполняет запись, сервис получает только id/ошибку операции.
-            self.news_repository.create(article_data)
+            article_id = self.news_repository.create(article_data)
         except IntegrityError:
             # Защита от гонки или старого дубля: если UNIQUE по URL сработал в БД, считаем статью дублем.
             result.skipped_duplicates += 1
             logger.info("Статья уже есть в БД: %s", parsed_article.direct_url)
-            return
+            return None
 
         result.saved += 1
+        return article_id
 
     def _resolve_article_type_id(self, article_type_code: str) -> int | None:
         """Найти идентификатор типа материала по коду с безопасным fallback на other."""
