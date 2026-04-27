@@ -27,6 +27,7 @@ project/instance/app.db
 project/instance/news.index
 project/instance/*.db
 project/instance/*.index
+project/instance/*.json
 
 # Project-local assistant docs
 AGENTS.md
