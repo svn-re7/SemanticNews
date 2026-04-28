@@ -17,6 +17,7 @@ from app.models.dto import (
     SourceSeedUpdateDTO,
 )
 from app.repositories.article_type_repository import ArticleTypeRepository
+from app.repositories.event_type_repository import EventTypeRepository
 from app.repositories.source_repository import SourceRepository
 from app.repositories.source_type_repository import SourceTypeRepository
 
@@ -81,6 +82,54 @@ ARTICLE_TYPES = [
     ),
 ]
 
+EVENT_TYPES = [
+    ReferenceSeedItem(
+        code="ingestion_started",
+        name="Сбор источника запущен",
+        description="Начало сценария сбора статей для конкретного источника.",
+    ),
+    ReferenceSeedItem(
+        code="ingestion_finished",
+        name="Сбор источника завершен",
+        description="Сбор источника завершился без критической ошибки.",
+    ),
+    ReferenceSeedItem(
+        code="ingestion_failed",
+        name="Ошибка сбора источника",
+        description="Сбор источника завершился ошибкой парсинга, сети или внутреннего сервиса.",
+    ),
+    ReferenceSeedItem(
+        code="source_created",
+        name="Источник добавлен",
+        description="Пользователь добавил новый источник новостей.",
+    ),
+    ReferenceSeedItem(
+        code="source_deleted",
+        name="Источник удален",
+        description="Пользователь удалил источник вместе с его статьями.",
+    ),
+    ReferenceSeedItem(
+        code="source_enabled",
+        name="Источник включен",
+        description="Пользователь включил источник для сбора и поиска.",
+    ),
+    ReferenceSeedItem(
+        code="source_disabled",
+        name="Источник выключен",
+        description="Пользователь выключил источник из активного набора.",
+    ),
+    ReferenceSeedItem(
+        code="search_executed",
+        name="Поиск выполнен",
+        description="Пользователь выполнил новый семантический поиск.",
+    ),
+    ReferenceSeedItem(
+        code="search_results_opened",
+        name="Сохраненная выдача открыта",
+        description="Пользователь открыл ранее сохраненные результаты поиска.",
+    ),
+]
+
 DEFAULT_SOURCE_URL = "https://ria.ru/sitemap_article_index.xml"
 DEFAULT_SOURCE_NAME = "РИА Новости"
 
@@ -92,10 +141,12 @@ def main() -> int:
 
     source_type_repository = SourceTypeRepository()
     article_type_repository = ArticleTypeRepository()
+    event_type_repository = EventTypeRepository()
     source_repository = SourceRepository()
 
     source_type_ids = _seed_reference_values(source_type_repository, SOURCE_TYPES)
     article_type_ids = _seed_reference_values(article_type_repository, ARTICLE_TYPES)
+    event_type_ids = _seed_reference_values(event_type_repository, EVENT_TYPES)
 
     # Стартовый источник использует тип news_media, потому что РИА является новостным медиа.
     source_id = _seed_default_source(
@@ -106,6 +157,7 @@ def main() -> int:
     print("Seed завершен.")
     print(f"Типы источников: {source_type_ids}")
     print(f"Типы материалов: {article_type_ids}")
+    print(f"Типы событий: {event_type_ids}")
     print(f"Стартовый источник: id={source_id}, url={DEFAULT_SOURCE_URL}")
     return 0
 

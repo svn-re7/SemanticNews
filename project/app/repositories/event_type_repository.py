@@ -4,7 +4,7 @@ from typing import Optional
 
 from sqlalchemy import select
 
-from app.models.dto import ReferenceValueCreateDTO
+from app.models.dto import ReferenceValueCreateDTO, ReferenceValueUpdateDTO
 from app.models.entities import EventType
 from app.orm import get_session, session_scope
 
@@ -37,6 +37,20 @@ class EventTypeRepository:
         with get_session() as session:
             stmt = select(EventType).where(EventType.code == code)
             return session.execute(stmt).scalar_one_or_none()
+
+    def update_display_fields(self, update_data: ReferenceValueUpdateDTO) -> bool:
+        """Обновить название и описание типа события."""
+        with session_scope() as session:
+            stmt = select(EventType).where(EventType.id == update_data.value_id)
+            event_type = session.execute(stmt).scalar_one_or_none()
+
+            if event_type is None:
+                return False
+
+            # Seed выравнивает только человекочитаемые поля, не меняя стабильный машинный code.
+            event_type.name = update_data.name
+            event_type.description = update_data.description
+            return True
 
     def list_all(self) -> list[EventType]:
         """Вернуть список всех типов технических событий."""
