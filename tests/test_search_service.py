@@ -111,6 +111,39 @@ class SearchServiceTest(unittest.TestCase):
                 [(77, 10, 1), (77, 20, 2)],
             )
 
+    def test_search_skips_inactive_sources_and_keeps_requested_result_count(self) -> None:
+        """Поиск не возвращает статьи из выключенных источников и добирает активные кандидаты из FAISS."""
+        articles = [
+            self._article(article_id=10, title="Выключенный источник", is_active=False),
+            self._article(article_id=20, title="Активная экономика"),
+            self._article(article_id=30, title="Активные финансы"),
+        ]
+        result_repository = FakeSearchResultRepository()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            index_path = Path(temp_dir) / "news.index"
+            id_map_path = Path(temp_dir) / "news_index_ids.json"
+            self._write_three_article_index(index_path)
+            self._write_three_article_id_map(id_map_path)
+
+            service = SearchService(
+                embedding_service=FakeEmbeddingService(),
+                news_repository=FakeNewsRepository(articles),
+                request_repository=FakeRequestRepository(),
+                search_result_repository=result_repository,
+                index_path=index_path,
+                id_map_path=id_map_path,
+            )
+
+            result = service.search("экономика", top_k=2)
+
+            self.assertEqual([item.article_id for item in result.items], [20, 30])
+            self.assertEqual([item.position for item in result.items], [1, 2])
+            self.assertEqual(
+                [(item.article_id, item.position) for item in result_repository.created_results],
+                [(20, 1), (30, 2)],
+            )
+
     def test_get_saved_results_returns_persisted_results_without_embedding_search(self) -> None:
         """Сохраненная выдача читается из SQLite-слоя без повторного FAISS-поиска."""
         articles = [
@@ -160,9 +193,30 @@ class SearchServiceTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def _article(self, article_id: int, title: str) -> Article:
+    def _write_three_article_index(self, index_path: Path) -> None:
+        """Создать FAISS-индекс, где ближайшая статья принадлежит выключенному источнику."""
+        embeddings = np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.9, 0.1, 0.0],
+                [0.8, 0.2, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        index = faiss.IndexFlatIP(3)
+        index.add(embeddings)
+        faiss.write_index(index, str(index_path))
+
+    def _write_three_article_id_map(self, id_map_path: Path) -> None:
+        """Создать карту FAISS-позиций для сценария с выключенным источником."""
+        id_map_path.write_text(
+            json.dumps({"article_ids": [10, 20, 30], "vector_size": 3, "index_size": 3}),
+            encoding="utf-8",
+        )
+
+    def _article(self, article_id: int, title: str, *, is_active: bool = True) -> Article:
         """Собрать минимальную статью с источником для результата поиска."""
-        source = Source(source_type_id=1, base_url="https://example.test", name="Тест", is_active=True)
+        source = Source(source_type_id=1, base_url="https://example.test", name="Тест", is_active=is_active)
         article = Article(
             source_id=1,
             article_type_id=1,

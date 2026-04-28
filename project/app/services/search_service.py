@@ -65,8 +65,9 @@ class SearchService:
 
         # Текстовый запрос превращаем в embedding того же типа, что и статьи при индексации.
         query_vector = self._prepare_query_vector(self.embedding_service.encode_query(normalized_query))
-        # Нельзя запросить больше результатов, чем реально лежит в индексе.
-        distances, positions = index.search(query_vector, min(top_k, index.ntotal))
+        # У FAISS берем кандидатов с запасом: часть ближайших статей может принадлежать выключенным источникам.
+        candidate_limit = self._candidate_limit(top_k=top_k, index_size=index.ntotal)
+        distances, positions = index.search(query_vector, candidate_limit)
         # FAISS возвращает позиции внутри индекса, а не id статей из SQLite.
         found_pairs = self._collect_found_pairs(distances=distances[0], positions=positions[0], article_ids=article_ids)
 
@@ -83,7 +84,11 @@ class SearchService:
         found_article_ids = [article_id for article_id, _ in found_pairs]
         articles_by_id = self._load_articles_by_id(found_article_ids)
         # DTO собираем в порядке FAISS, потому что именно этот порядок отражает релевантность.
-        items = self._build_result_items(found_pairs=found_pairs, articles_by_id=articles_by_id)
+        items = self._build_result_items(
+            found_pairs=found_pairs,
+            articles_by_id=articles_by_id,
+            limit=top_k,
+        )
 
         # Историю поиска сохраняем уже после чтения статей, чтобы в БД не попадали битые позиции индекса.
         self.search_result_repository.create_many(
@@ -171,6 +176,12 @@ class SearchService:
             found_pairs.append((article_ids[int(position)], float(distance)))
         return found_pairs
 
+    def _candidate_limit(self, *, top_k: int, index_size: int) -> int:
+        """Посчитать, сколько кандидатов нужно запросить у FAISS до фильтрации по активности источников."""
+        # После FAISS есть прикладной фильтр по Source.is_active, поэтому запрашиваем больше top_k.
+        # Это повышает шанс вернуть пользователю нужное число результатов, даже если часть кандидатов выключена.
+        return min(top_k * 3, index_size)
+
     def _load_articles_by_id(self, article_ids: list[int]) -> dict[int, Article]:
         """Загрузить найденные статьи из SQLite и разложить их по id."""
         articles = self.news_repository.get_by_ids(article_ids)
@@ -182,13 +193,17 @@ class SearchService:
         *,
         found_pairs: list[tuple[int, float]],
         articles_by_id: dict[int, Article],
+        limit: int,
     ) -> list[SearchResultItemDTO]:
         """Собрать DTO выдачи в том же порядке, который вернул FAISS."""
         items: list[SearchResultItemDTO] = []
-        for position, (article_id, relevance) in enumerate(found_pairs, start=1):
+        for article_id, relevance in found_pairs:
             article = articles_by_id.get(article_id)
             if article is None:
                 # Если статья удалена из SQLite после пересборки индекса, пропускаем битую ссылку.
+                continue
+            if not self._is_article_from_active_source(article):
+                # FAISS не знает про состояние Source.is_active, поэтому бизнес-фильтр делаем здесь.
                 continue
 
             # В DTO кладем только данные, которые нужны контроллеру, CLI или будущему шаблону поиска.
@@ -200,10 +215,17 @@ class SearchService:
                     source_name=article.source.name if article.source is not None else "unknown",
                     published_at=article.published_at,
                     relevance=relevance,
-                    position=position,
+                    position=len(items) + 1,
                 )
             )
+            if len(items) >= limit:
+                break
         return items
+
+    def _is_article_from_active_source(self, article: Article) -> bool:
+        """Проверить, что статья принадлежит активному источнику."""
+        # Если связь со Source не загрузилась или источник удален, такую статью безопаснее не показывать в поиске.
+        return article.source is not None and article.source.is_active
 
     def _build_saved_result_items(
         self,
