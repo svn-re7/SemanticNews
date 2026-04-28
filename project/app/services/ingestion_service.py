@@ -14,6 +14,7 @@ from app.repositories.article_type_repository import ArticleTypeRepository
 from app.repositories.news_repository import NewsRepository
 from app.repositories.source_repository import SourceRepository
 from app.services.indexing_service import IndexingService
+from app.services.logging_service import LoggingService
 
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ class IngestionService:
         news_repository: NewsRepository | None = None,
         article_type_repository: ArticleTypeRepository | None = None,
         indexing_service: IndexingService | None = None,
+        logging_service: LoggingService | None = None,
         sitemap_parser: Callable[..., list[ExtractedArticle]] | None = None,
     ) -> None:
         # Зависимости можно передать снаружи для тестов, а в обычном запуске сервис сам создает рабочие репозитории.
@@ -59,6 +61,7 @@ class IngestionService:
         self.indexing_service = (
             indexing_service if indexing_service is not None else IndexingService()
         )
+        self.logging_service = logging_service if logging_service is not None else LoggingService()
         # Парсер тоже оставлен заменяемым, чтобы проверить ingestion без реальных HTTP-запросов к сайтам.
         self.sitemap_parser = (
             sitemap_parser
@@ -119,44 +122,50 @@ class IngestionService:
         if max_articles <= 0:
             raise ValueError("max_articles должен быть положительным числом")
 
-        # На этом шаге сервис вызывает parser-слой и получает структурированные модели, а не сырые словари.
-        extracted_articles = self.sitemap_parser(
-            source.base_url,
-            sitemap_limit=sitemap_limit,
-            max_articles=max_articles,
-            stop_after_published_at=source.last_indexed_at,
-        )
-        result = IngestionResult(
-            source_id=source.id,
-            source_base_url=source.base_url,
-            found=len(extracted_articles),
-        )
+        self.logging_service.log_source_event(source_id=source.id, event_code="ingestion_started")
+        try:
+            # На этом шаге сервис вызывает parser-слой и получает структурированные модели, а не сырые словари.
+            extracted_articles = self.sitemap_parser(
+                source.base_url,
+                sitemap_limit=sitemap_limit,
+                max_articles=max_articles,
+                stop_after_published_at=source.last_indexed_at,
+            )
+            result = IngestionResult(
+                source_id=source.id,
+                source_base_url=source.base_url,
+                found=len(extracted_articles),
+            )
 
-        # Каждая статья проходит одинаковый путь: parser model -> DTO -> проверка правил -> repository -> SQLite.
-        saved_article_ids: list[int] = []
-        for extracted_article in extracted_articles:
-            parsed_article = self._to_parsed_article(source.base_url, extracted_article)
-            saved_article_id = self._save_parsed_article(source, parsed_article, result)
-            if saved_article_id is not None:
-                saved_article_ids.append(saved_article_id)
+            # Каждая статья проходит одинаковый путь: parser model -> DTO -> проверка правил -> repository -> SQLite.
+            saved_article_ids: list[int] = []
+            for extracted_article in extracted_articles:
+                parsed_article = self._to_parsed_article(source.base_url, extracted_article)
+                saved_article_id = self._save_parsed_article(source, parsed_article, result)
+                if saved_article_id is not None:
+                    saved_article_ids.append(saved_article_id)
 
-        if saved_article_ids:
-            # FAISS обновляем после успешных записей в SQLite, потому что article_id появляется только после insert.
-            append_result = self.indexing_service.append_articles_by_ids(saved_article_ids)
-            result.indexed = append_result.articles_count
+            if saved_article_ids:
+                # FAISS обновляем после успешных записей в SQLite, потому что article_id появляется только после insert.
+                append_result = self.indexing_service.append_articles_by_ids(saved_article_ids)
+                result.indexed = append_result.articles_count
 
-        # Фиксируем время попытки ingestion для источника, чтобы потом можно было показывать его в UI.
-        self.source_repository.update_last_indexed_at(source.id, datetime.now())
-        logger.info(
-            "Ingestion source_id=%s: найдено=%s, сохранено=%s, проиндексировано=%s, дубли=%s, без текста=%s",
-            result.source_id,
-            result.found,
-            result.saved,
-            result.indexed,
-            result.skipped_duplicates,
-            result.skipped_empty_text,
-        )
-        return result
+            # Фиксируем время попытки ingestion для источника, чтобы потом можно было показывать его в UI.
+            self.source_repository.update_last_indexed_at(source.id, datetime.now())
+            self.logging_service.log_source_event(source_id=source.id, event_code="ingestion_finished")
+            logger.info(
+                "Ingestion source_id=%s: найдено=%s, сохранено=%s, проиндексировано=%s, дубли=%s, без текста=%s",
+                result.source_id,
+                result.found,
+                result.saved,
+                result.indexed,
+                result.skipped_duplicates,
+                result.skipped_empty_text,
+            )
+            return result
+        except Exception:
+            self.logging_service.log_source_event(source_id=source.id, event_code="ingestion_failed")
+            raise
 
     def _to_parsed_article(
         self,

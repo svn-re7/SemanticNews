@@ -21,6 +21,7 @@ from app.repositories.news_repository import NewsRepository
 from app.repositories.request_repository import RequestRepository
 from app.repositories.search_result_repository import SearchResultRepository
 from app.services.embedding_service import EmbeddingService
+from app.services.logging_service import LoggingService
 
 
 class SearchService:
@@ -33,6 +34,7 @@ class SearchService:
         news_repository: NewsRepository | None = None,
         request_repository: RequestRepository | None = None,
         search_result_repository: SearchResultRepository | None = None,
+        logging_service: LoggingService | None = None,
         index_path: Path | None = None,
         id_map_path: Path | None = None,
     ) -> None:
@@ -46,6 +48,7 @@ class SearchService:
             if search_result_repository is not None
             else SearchResultRepository()
         )
+        self.logging_service = logging_service if logging_service is not None else LoggingService()
         # Пути тоже можно подменить в тестах, чтобы не трогать рабочие файлы из project/instance.
         self.index_path = index_path if index_path is not None else Config.FAISS_INDEX_PATH
         self.id_map_path = id_map_path if id_map_path is not None else Config.FAISS_ID_MAP_PATH
@@ -81,6 +84,7 @@ class SearchService:
                 limit=top_k,
             )
         )
+        self.logging_service.log_query_event(request_id=request_id, event_code="search_executed")
 
         # После FAISS возвращаемся в SQLite: только база хранит заголовки, ссылки, даты и источник.
         found_article_ids = [article_id for article_id, _ in found_pairs]
@@ -112,6 +116,7 @@ class SearchService:
         request = self.request_repository.get_by_id(request_id)
         if request is None:
             raise ValueError(f"Поисковый запрос с id={request_id} не найден.")
+        self.logging_service.log_query_event(request_id=request_id, event_code="search_results_opened")
 
         # Здесь принципиально не строим embedding и не читаем FAISS: выдача уже сохранена в SQLite.
         saved_results = self.search_result_repository.list_by_request_id(request_id)

@@ -110,6 +110,7 @@ class SearchServiceTest(unittest.TestCase):
                 news_repository=FakeNewsRepository(articles),
                 request_repository=request_repository,
                 search_result_repository=result_repository,
+                logging_service=FakeLoggingService(),
                 index_path=index_path,
                 id_map_path=id_map_path,
             )
@@ -180,6 +181,7 @@ class SearchServiceTest(unittest.TestCase):
             news_repository=FakeNewsRepository(articles),
             request_repository=FakeRequestRepository(saved_request=request),
             search_result_repository=FakeSearchResultRepository(saved_results=saved_results),
+            logging_service=FakeLoggingService(),
         )
 
         result = service.get_saved_results(77)
@@ -189,6 +191,52 @@ class SearchServiceTest(unittest.TestCase):
         self.assertEqual([item.article_id for item in result.items], [20, 10])
         self.assertEqual([item.position for item in result.items], [1, 2])
         self.assertFalse(embedding_service.was_called)
+
+    def test_search_logs_executed_query_event(self) -> None:
+        """Новый поиск пишет событие search_executed после создания Request."""
+        articles = [
+            self._article(article_id=10, title="Экономика"),
+            self._article(article_id=20, title="Финансы"),
+        ]
+        logging_service = FakeLoggingService()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            index_path = Path(temp_dir) / "news.index"
+            id_map_path = Path(temp_dir) / "news_index_ids.json"
+            self._write_test_index(index_path)
+            self._write_test_id_map(id_map_path)
+
+            service = SearchService(
+                embedding_service=FakeEmbeddingService(),
+                news_repository=FakeNewsRepository(articles),
+                request_repository=FakeRequestRepository(),
+                search_result_repository=FakeSearchResultRepository(),
+                logging_service=logging_service,
+                index_path=index_path,
+                id_map_path=id_map_path,
+            )
+
+            service.search("экономика", top_k=1)
+
+        self.assertEqual(logging_service.query_events, [(77, "search_executed")])
+
+    def test_get_saved_results_logs_opened_results_event(self) -> None:
+        """Открытие сохраненной выдачи пишет событие search_results_opened."""
+        request = Request(query_text="экономика", executed_at=datetime(2026, 1, 1))
+        request.id = 77
+        logging_service = FakeLoggingService()
+
+        service = SearchService(
+            embedding_service=FailingEmbeddingService(),
+            news_repository=FakeNewsRepository([]),
+            request_repository=FakeRequestRepository(saved_request=request),
+            search_result_repository=FakeSearchResultRepository(saved_results=[]),
+            logging_service=logging_service,
+        )
+
+        service.get_saved_results(77)
+
+        self.assertEqual(logging_service.query_events, [(77, "search_results_opened")])
 
     def test_get_search_history_returns_paginated_request_dtos_without_embedding_search(self) -> None:
         """История поиска читается постранично из RequestRepository и не запускает embedding/FAISS."""
@@ -309,6 +357,18 @@ class FailingEmbeddingService:
         """Зафиксировать ошибочный вызов embedding при чтении истории."""
         self.was_called = True
         raise AssertionError("Saved results must not call embeddings")
+
+
+class FakeLoggingService:
+    """Подменный сервис логирования поисковых событий."""
+
+    def __init__(self) -> None:
+        self.query_events: list[tuple[int, str]] = []
+
+    def log_query_event(self, *, request_id: int, event_code: str) -> int:
+        """Запомнить событие поискового запроса."""
+        self.query_events.append((request_id, event_code))
+        return len(self.query_events)
 
 
 if __name__ == "__main__":

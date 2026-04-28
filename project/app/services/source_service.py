@@ -12,6 +12,7 @@ from app.models.dto import (
 from app.models.entities import Source
 from app.repositories.source_repository import SourceRepository
 from app.repositories.source_type_repository import SourceTypeRepository
+from app.services.logging_service import LoggingService
 
 
 class SourceService:
@@ -22,12 +23,14 @@ class SourceService:
         *,
         source_repository: SourceRepository | None = None,
         source_type_repository: SourceTypeRepository | None = None,
+        logging_service: LoggingService | None = None,
     ) -> None:
         # Репозитории можно подменить в тестах, а в приложении используются реальные SQLAlchemy-репозитории.
         self.source_repository = source_repository if source_repository is not None else SourceRepository()
         self.source_type_repository = (
             source_type_repository if source_type_repository is not None else SourceTypeRepository()
         )
+        self.logging_service = logging_service if logging_service is not None else LoggingService()
 
     def get_sources_page(self) -> SourceManagementPageDTO:
         """Подготовить данные для страницы управления источниками."""
@@ -56,7 +59,7 @@ class SourceService:
         if self.source_repository.get_by_base_url(normalized_base_url) is not None:
             raise ValueError("Источник с таким URL уже существует.")
 
-        return self.source_repository.create(
+        source_id = self.source_repository.create(
             SourceCreateDTO(
                 source_type_id=source_type_id,
                 base_url=normalized_base_url,
@@ -64,12 +67,18 @@ class SourceService:
                 is_active=True,
             )
         )
+        self.logging_service.log_source_event(source_id=source_id, event_code="source_created")
+        return source_id
 
     def update_source_activity(self, *, source_id: int, is_active: bool) -> bool:
         """Включить или выключить источник."""
-        return self.source_repository.update_active_state(
+        updated = self.source_repository.update_active_state(
             SourceActiveUpdateDTO(source_id=source_id, is_active=is_active)
         )
+        if updated:
+            event_code = "source_enabled" if is_active else "source_disabled"
+            self.logging_service.log_source_event(source_id=source_id, event_code=event_code)
+        return updated
 
     def delete_source(self, *, source_id: int) -> bool:
         """Удалить источник вместе с его статьями и связанными поисковыми результатами."""

@@ -18,6 +18,7 @@ class IngestionServiceTest(unittest.TestCase):
     def test_ingest_source_appends_saved_article_ids_to_faiss_index(self) -> None:
         """После сохранения новых статей ingestion передает их id в индексатор."""
         indexing_service = FakeIndexingService()
+        logging_service = FakeLoggingService()
         news_repository = FakeNewsRepository(created_ids=[101, 102])
         source = Source(
             source_type_id=1,
@@ -32,6 +33,7 @@ class IngestionServiceTest(unittest.TestCase):
             news_repository=news_repository,
             article_type_repository=FakeArticleTypeRepository(),
             indexing_service=indexing_service,
+            logging_service=logging_service,
             sitemap_parser=fake_sitemap_parser,
         )
 
@@ -40,6 +42,38 @@ class IngestionServiceTest(unittest.TestCase):
         self.assertEqual(result.saved, 2)
         self.assertEqual(result.indexed, 2)
         self.assertEqual(indexing_service.appended_article_ids, [101, 102])
+        self.assertEqual(
+            logging_service.source_events,
+            [(5, "ingestion_started"), (5, "ingestion_finished")],
+        )
+
+    def test_ingest_source_logs_failed_event_when_parser_fails(self) -> None:
+        """Если parser падает, ingestion пишет событие ingestion_failed и пробрасывает ошибку."""
+        logging_service = FakeLoggingService()
+        source = Source(
+            source_type_id=1,
+            base_url="https://example.test/sitemap.xml",
+            name="Тестовый источник",
+            is_active=True,
+        )
+        source.id = 5
+
+        service = IngestionService(
+            source_repository=FakeSourceRepository(source),
+            news_repository=FakeNewsRepository(created_ids=[]),
+            article_type_repository=FakeArticleTypeRepository(),
+            indexing_service=FakeIndexingService(),
+            logging_service=logging_service,
+            sitemap_parser=failing_sitemap_parser,
+        )
+
+        with self.assertRaises(RuntimeError):
+            service.ingest_source(source, sitemap_limit=1, max_articles=2)
+
+        self.assertEqual(
+            logging_service.source_events,
+            [(5, "ingestion_started"), (5, "ingestion_failed")],
+        )
 
 
 class FakeSourceRepository:
@@ -110,6 +144,18 @@ class FakeIndexAppendResult:
         self.articles_count = articles_count
 
 
+class FakeLoggingService:
+    """Подменный сервис логирования ingestion-событий."""
+
+    def __init__(self) -> None:
+        self.source_events: list[tuple[int, str]] = []
+
+    def log_source_event(self, *, source_id: int, event_code: str) -> int:
+        """Запомнить событие источника."""
+        self.source_events.append((source_id, event_code))
+        return len(self.source_events)
+
+
 def fake_sitemap_parser(*args, **kwargs) -> list[ExtractedArticle]:
     """Вернуть две тестовые статьи без сетевых запросов."""
     return [
@@ -126,6 +172,11 @@ def fake_sitemap_parser(*args, **kwargs) -> list[ExtractedArticle]:
             published_at=datetime(2026, 1, 2),
         ),
     ]
+
+
+def failing_sitemap_parser(*args, **kwargs) -> list[ExtractedArticle]:
+    """Имитировать ошибку parser-слоя."""
+    raise RuntimeError("parser failed")
 
 
 if __name__ == "__main__":

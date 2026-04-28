@@ -19,9 +19,11 @@ class SourceServiceTest(unittest.TestCase):
         """Подготовить сервис с подменными репозиториями без обращения к SQLite."""
         self.source_repository = FakeSourceRepository()
         self.source_type_repository = FakeSourceTypeRepository()
+        self.logging_service = FakeLoggingService()
         self.service = SourceService(
             source_repository=self.source_repository,
             source_type_repository=self.source_type_repository,
+            logging_service=self.logging_service,
         )
 
     def test_get_sources_page_returns_sources_and_type_options(self) -> None:
@@ -64,6 +66,7 @@ class SourceServiceTest(unittest.TestCase):
         self.assertIsNotNone(self.source_repository.created_source)
         self.assertEqual(self.source_repository.created_source.name, "example.test")
         self.assertTrue(self.source_repository.created_source.is_active)
+        self.assertEqual(self.logging_service.source_events, [(10, "source_created")])
 
     def test_update_source_activity_passes_dto_to_repository(self) -> None:
         """Переключение активности передается в репозиторий отдельным DTO."""
@@ -74,6 +77,14 @@ class SourceServiceTest(unittest.TestCase):
             self.source_repository.updated_activity,
             SourceActiveUpdateDTO(source_id=5, is_active=False),
         )
+        self.assertEqual(self.logging_service.source_events, [(5, "source_disabled")])
+
+    def test_update_source_activity_logs_enabled_event(self) -> None:
+        """Включение источника пишет событие source_enabled."""
+        updated = self.service.update_source_activity(source_id=5, is_active=True)
+
+        self.assertTrue(updated)
+        self.assertEqual(self.logging_service.source_events, [(5, "source_enabled")])
 
     def test_delete_source_delegates_to_repository(self) -> None:
         """Удаление источника передается в репозиторий отдельным сценарием."""
@@ -160,6 +171,18 @@ class FakeSourceTypeRepository:
         if source_type_id == self.source_type.id:
             return self.source_type
         return None
+
+
+class FakeLoggingService:
+    """Подменный сервис логирования действий с источниками."""
+
+    def __init__(self) -> None:
+        self.source_events: list[tuple[int, str]] = []
+
+    def log_source_event(self, *, source_id: int, event_code: str) -> int:
+        """Запомнить событие источника."""
+        self.source_events.append((source_id, event_code))
+        return len(self.source_events)
 
 
 if __name__ == "__main__":
