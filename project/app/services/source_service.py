@@ -12,6 +12,7 @@ from app.models.dto import (
 from app.models.entities import Source
 from app.repositories.source_repository import SourceRepository
 from app.repositories.source_type_repository import SourceTypeRepository
+from app.services.indexing_service import IndexingService
 from app.services.logging_service import LoggingService
 
 
@@ -24,6 +25,7 @@ class SourceService:
         source_repository: SourceRepository | None = None,
         source_type_repository: SourceTypeRepository | None = None,
         logging_service: LoggingService | None = None,
+        indexing_service: IndexingService | None = None,
     ) -> None:
         # Репозитории можно подменить в тестах, а в приложении используются реальные SQLAlchemy-репозитории.
         self.source_repository = source_repository if source_repository is not None else SourceRepository()
@@ -31,6 +33,7 @@ class SourceService:
             source_type_repository if source_type_repository is not None else SourceTypeRepository()
         )
         self.logging_service = logging_service if logging_service is not None else LoggingService()
+        self.indexing_service = indexing_service if indexing_service is not None else IndexingService()
 
     def get_sources_page(self) -> SourceManagementPageDTO:
         """Подготовить данные для страницы управления источниками."""
@@ -82,7 +85,11 @@ class SourceService:
 
     def delete_source(self, *, source_id: int) -> bool:
         """Удалить источник вместе с его статьями и связанными поисковыми результатами."""
-        return self.source_repository.delete_with_articles(source_id)
+        deleted = self.source_repository.delete_with_articles(source_id)
+        if deleted:
+            # После физического удаления статей старые FAISS-векторы нельзя оставить в индексе.
+            self.indexing_service.rebuild_full_index()
+        return deleted
 
     def _to_source_item(self, source: Source) -> SourceListItemDTO:
         """Преобразовать ORM-источник в DTO для шаблона."""

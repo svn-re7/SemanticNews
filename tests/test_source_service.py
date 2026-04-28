@@ -20,10 +20,12 @@ class SourceServiceTest(unittest.TestCase):
         self.source_repository = FakeSourceRepository()
         self.source_type_repository = FakeSourceTypeRepository()
         self.logging_service = FakeLoggingService()
+        self.indexing_service = FakeIndexingService()
         self.service = SourceService(
             source_repository=self.source_repository,
             source_type_repository=self.source_type_repository,
             logging_service=self.logging_service,
+            indexing_service=self.indexing_service,
         )
 
     def test_get_sources_page_returns_sources_and_type_options(self) -> None:
@@ -92,6 +94,17 @@ class SourceServiceTest(unittest.TestCase):
 
         self.assertTrue(deleted)
         self.assertEqual(self.source_repository.deleted_source_id, 5)
+        self.assertEqual(self.indexing_service.rebuild_count, 1)
+
+    def test_delete_source_does_not_rebuild_index_when_source_was_not_deleted(self) -> None:
+        """FAISS не пересобирается, если репозиторий не нашел источник для удаления."""
+        self.source_repository.delete_result = False
+
+        deleted = self.service.delete_source(source_id=404)
+
+        self.assertFalse(deleted)
+        self.assertEqual(self.source_repository.deleted_source_id, 404)
+        self.assertEqual(self.indexing_service.rebuild_count, 0)
 
 
 @dataclass(slots=True)
@@ -129,6 +142,7 @@ class FakeSourceRepository:
         self.created_source: SourceCreateDTO | None = None
         self.updated_activity: SourceActiveUpdateDTO | None = None
         self.deleted_source_id: int | None = None
+        self.delete_result = True
 
     def list_sources(self) -> list[FakeSource]:
         """Вернуть фиксированный список источников."""
@@ -153,7 +167,7 @@ class FakeSourceRepository:
     def delete_with_articles(self, source_id: int) -> bool:
         """Запомнить удаление источника со связанными статьями."""
         self.deleted_source_id = source_id
-        return True
+        return self.delete_result
 
 
 class FakeSourceTypeRepository:
@@ -183,6 +197,17 @@ class FakeLoggingService:
         """Запомнить событие источника."""
         self.source_events.append((source_id, event_code))
         return len(self.source_events)
+
+
+class FakeIndexingService:
+    """Подменный сервис индексации, который считает пересборки FAISS."""
+
+    def __init__(self) -> None:
+        self.rebuild_count = 0
+
+    def rebuild_full_index(self) -> None:
+        """Запомнить, что сервис источников запросил полную пересборку индекса."""
+        self.rebuild_count += 1
 
 
 if __name__ == "__main__":
