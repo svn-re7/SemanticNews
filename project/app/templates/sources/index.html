@@ -50,6 +50,7 @@
                         <th>URL</th>
                         <th>Последний сбор</th>
                         <th>Активность</th>
+                        <th>Удаление</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -76,6 +77,15 @@
                                         <input type="hidden" name="is_active" value="true">
                                         <button class="btn btn-outline-success btn-sm" type="submit">Включить</button>
                                     {% endif %}
+                                </form>
+                            </td>
+                            <td>
+                                <form
+                                    method="post"
+                                    action="{{ url_for('sources.delete_source', source_id=source.source_id) }}"
+                                    onsubmit="return confirm('Источник будет удален. Вместе с ним будут удалены все статьи этого источника и все результаты поиска, где есть эти статьи. Продолжить?');"
+                                >
+                                    <button class="btn btn-danger btn-sm" type="submit">Удалить</button>
                                 </form>
                             </td>
                         </tr>

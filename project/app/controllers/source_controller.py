@@ -51,3 +51,10 @@ def update_source_activity(source_id: int):
     is_active = request.form.get("is_active") == "true"
     SourceService().update_source_activity(source_id=source_id, is_active=is_active)
     return redirect(url_for("sources.sources_page"))
+
+
+@source_bp.post("/<int:source_id>/delete")
+def delete_source(source_id: int):
+    """Удалить источник вместе со статьями и связанными результатами поиска."""
+    SourceService().delete_source(source_id=source_id)
+    return redirect(url_for("sources.sources_page"))

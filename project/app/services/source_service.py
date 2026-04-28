@@ -71,6 +71,10 @@ class SourceService:
             SourceActiveUpdateDTO(source_id=source_id, is_active=is_active)
         )
 
+    def delete_source(self, *, source_id: int) -> bool:
+        """Удалить источник вместе с его статьями и связанными поисковыми результатами."""
+        return self.source_repository.delete_with_articles(source_id)
+
     def _to_source_item(self, source: Source) -> SourceListItemDTO:
         """Преобразовать ORM-источник в DTO для шаблона."""
         return SourceListItemDTO(

@@ -75,6 +75,13 @@ class SourceServiceTest(unittest.TestCase):
             SourceActiveUpdateDTO(source_id=5, is_active=False),
         )
 
+    def test_delete_source_delegates_to_repository(self) -> None:
+        """Удаление источника передается в репозиторий отдельным сценарием."""
+        deleted = self.service.delete_source(source_id=5)
+
+        self.assertTrue(deleted)
+        self.assertEqual(self.source_repository.deleted_source_id, 5)
+
 
 @dataclass(slots=True)
 class FakeSourceType:
@@ -110,6 +117,7 @@ class FakeSourceRepository:
         )
         self.created_source: SourceCreateDTO | None = None
         self.updated_activity: SourceActiveUpdateDTO | None = None
+        self.deleted_source_id: int | None = None
 
     def list_sources(self) -> list[FakeSource]:
         """Вернуть фиксированный список источников."""
@@ -129,6 +137,11 @@ class FakeSourceRepository:
     def update_active_state(self, update_data: SourceActiveUpdateDTO) -> bool:
         """Запомнить DTO обновления активности."""
         self.updated_activity = update_data
+        return True
+
+    def delete_with_articles(self, source_id: int) -> bool:
+        """Запомнить удаление источника со связанными статьями."""
+        self.deleted_source_id = source_id
         return True
 
 

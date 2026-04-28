@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import joinedload
 
 from app.models.dto import SourceActiveUpdateDTO, SourceCreateDTO, SourceSeedUpdateDTO
-from app.models.entities import Source
+from app.models.entities import Article, SearchResult, Source, SourceLog
 from app.orm import get_session, session_scope
 
 
@@ -98,4 +98,25 @@ class SourceRepository:
                 return False
 
             source.last_indexed_at = indexed_at
+            return True
+
+    def delete_with_articles(self, source_id: int) -> bool:
+        """Удалить источник вместе с его статьями и поисковыми результатами по этим статьям."""
+        with session_scope() as session:
+            source_exists = session.execute(
+                select(Source.id).where(Source.id == source_id)
+            ).scalar_one_or_none()
+            if source_exists is None:
+                return False
+
+            # SearchResult связан со статьями, поэтому сначала удаляем сохраненные позиции выдачи.
+            source_article_ids = select(Article.id).where(Article.source_id == source_id).scalar_subquery()
+            session.execute(
+                delete(SearchResult).where(SearchResult.article_id.in_(source_article_ids))
+            )
+            # После результатов можно удалить сами статьи источника.
+            session.execute(delete(Article).where(Article.source_id == source_id))
+            # Технические логи источника тоже удаляем, иначе FK source_log.source_id запретит удалить Source.
+            session.execute(delete(SourceLog).where(SourceLog.source_id == source_id))
+            session.execute(delete(Source).where(Source.id == source_id))
             return True

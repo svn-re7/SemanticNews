@@ -34,6 +34,8 @@ class SourceControllerTest(unittest.TestCase):
         self.assertIn("РИА Новости", response.text)
         self.assertIn('name="base_url"', response.text)
         self.assertIn("Новостное СМИ", response.text)
+        self.assertIn("/sources/5/delete", response.text)
+        self.assertIn("будут удалены все статьи этого источника", response.text)
 
     def test_create_source_posts_form_to_service(self) -> None:
         """POST формы добавления источника передает данные в SourceService."""
@@ -65,6 +67,16 @@ class SourceControllerTest(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(fake_service.updated_activity, (5, False))
 
+    def test_delete_source_posts_to_service(self) -> None:
+        """POST удаления источника передает id источника в SourceService."""
+        fake_service = FakeSourceService()
+
+        with patch("app.controllers.source_controller.SourceService", return_value=fake_service):
+            response = self.client.post("/sources/5/delete")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(fake_service.deleted_source_id, 5)
+
 
 class FakeSourceService:
     """Подменный сервис источников для тестов контроллера без SQLite."""
@@ -72,6 +84,7 @@ class FakeSourceService:
     def __init__(self) -> None:
         self.created_source: tuple[str, str, int] | None = None
         self.updated_activity: tuple[int, bool] | None = None
+        self.deleted_source_id: int | None = None
 
     def get_sources_page(self) -> SourceManagementPageDTO:
         """Вернуть готовые данные страницы источников."""
@@ -99,6 +112,11 @@ class FakeSourceService:
     def update_source_activity(self, *, source_id: int, is_active: bool) -> bool:
         """Запомнить изменение активности источника."""
         self.updated_activity = (source_id, is_active)
+        return True
+
+    def delete_source(self, *, source_id: int) -> bool:
+        """Запомнить удаление источника."""
+        self.deleted_source_id = source_id
         return True
 
 
