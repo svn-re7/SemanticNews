@@ -48,3 +48,11 @@ def saved_search_results(request_id: int):
         search_result=search_result,
         error_message=None,
     )
+
+
+@search_bp.get("/history")
+def search_history():
+    """Показать историю поисковых запросов с переходом к сохраненным результатам."""
+    # История не запускает embedding и FAISS: она читает только таблицу Request.
+    history_items = SearchService().get_search_history(limit=50)
+    return render_template("search/history.html", history_items=history_items)

@@ -41,9 +41,15 @@ class FakeNewsRepository:
 class FakeRequestRepository:
     """Тестовый репозиторий поисковых запросов."""
 
-    def __init__(self, saved_request: Request | None = None) -> None:
+    def __init__(
+        self,
+        saved_request: Request | None = None,
+        saved_requests: list[Request] | None = None,
+    ) -> None:
         self.created_query_text: str | None = None
         self.saved_request = saved_request
+        self.saved_requests = saved_requests or []
+        self.history_limit: int | None = None
 
     def create(self, query_data) -> int:
         """Запомнить созданный запрос и вернуть стабильный id."""
@@ -53,6 +59,11 @@ class FakeRequestRepository:
     def get_by_id(self, request_id: int) -> Request | None:
         """Вернуть сохраненный тестовый запрос по id."""
         return self.saved_request if self.saved_request and self.saved_request.id == request_id else None
+
+    def list_requests(self, limit: int, offset: int = 0) -> list[Request]:
+        """Вернуть последние запросы для истории поиска."""
+        self.history_limit = limit
+        return self.saved_requests[offset : offset + limit]
 
 
 class FakeSearchResultRepository:
@@ -173,6 +184,27 @@ class SearchServiceTest(unittest.TestCase):
         self.assertEqual([item.position for item in result.items], [1, 2])
         self.assertFalse(embedding_service.was_called)
 
+    def test_get_search_history_returns_request_dtos_without_embedding_search(self) -> None:
+        """История поиска читается из RequestRepository и не запускает embedding/FAISS."""
+        first_request = self._request(request_id=77, query_text="экономика", executed_at=datetime(2026, 1, 1, 12, 0))
+        second_request = self._request(request_id=76, query_text="спорт", executed_at=datetime(2026, 1, 1, 11, 0))
+        request_repository = FakeRequestRepository(saved_requests=[first_request, second_request])
+        embedding_service = FailingEmbeddingService()
+
+        service = SearchService(
+            embedding_service=embedding_service,
+            news_repository=FakeNewsRepository([]),
+            request_repository=request_repository,
+            search_result_repository=FakeSearchResultRepository(),
+        )
+
+        history = service.get_search_history(limit=10)
+
+        self.assertEqual(request_repository.history_limit, 10)
+        self.assertEqual([item.request_id for item in history], [77, 76])
+        self.assertEqual([item.query_text for item in history], ["экономика", "спорт"])
+        self.assertFalse(embedding_service.was_called)
+
     def _write_test_index(self, index_path: Path) -> None:
         """Создать маленький FAISS-индекс для теста поискового сценария."""
         embeddings = np.array(
@@ -247,6 +279,12 @@ class SearchServiceTest(unittest.TestCase):
         )
         search_result.id = position
         return search_result
+
+    def _request(self, *, request_id: int, query_text: str, executed_at: datetime) -> Request:
+        """Собрать ORM-объект поискового запроса для теста истории."""
+        request = Request(query_text=query_text, executed_at=executed_at)
+        request.id = request_id
+        return request
 
 
 class FailingEmbeddingService:

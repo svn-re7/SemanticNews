@@ -139,6 +139,18 @@ class SearchResponseDTO:
 
 
 @dataclass(slots=True)
+class SearchHistoryItemDTO:
+    """Одна строка истории поисковых запросов для UI."""
+
+    # Идентификатор сохраненного поискового запроса.
+    request_id: int
+    # Текст запроса, который вводил пользователь.
+    query_text: str
+    # Время выполнения запроса.
+    executed_at: datetime
+
+
+@dataclass(slots=True)
 class SearchResultCreateDTO:
     """Готовые данные для создания записи SearchResult в базе данных."""
 

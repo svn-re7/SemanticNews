@@ -9,6 +9,7 @@ import numpy as np
 
 from app.config import Config
 from app.models.dto import (
+    SearchHistoryItemDTO,
     SearchQueryDTO,
     SearchResponseDTO,
     SearchResultCreateDTO,
@@ -125,6 +126,22 @@ class SearchService:
             query_text=request.query_text,
             items=items,
         )
+
+    def get_search_history(self, limit: int = 50) -> list[SearchHistoryItemDTO]:
+        """Вернуть последние поисковые запросы для страницы истории."""
+        if limit <= 0:
+            raise ValueError("Количество запросов в истории должно быть положительным.")
+
+        # История строится только по таблице Request: сами результаты уже открываются отдельным route по request_id.
+        requests = self.request_repository.list_requests(limit=limit)
+        return [
+            SearchHistoryItemDTO(
+                request_id=saved_request.id,
+                query_text=saved_request.query_text,
+                executed_at=saved_request.executed_at,
+            )
+            for saved_request in requests
+        ]
 
     def _read_index(self):
         """Прочитать FAISS-индекс с диска."""

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block title %}История поиска - SemanticNews{% endblock %}
+
+{% block content %}
+<section class="mx-auto" style="max-width: 920px;">
+    <div class="d-flex align-items-start justify-content-between gap-3 mb-4">
+        <div>
+            <h1 class="h3 mb-2">История поиска</h1>
+            <p class="text-muted mb-0">
+                Здесь показаны последние сохраненные запросы. Переход открывает уже готовую выдачу без повторного FAISS-поиска.
+            </p>
+        </div>
+        <a class="btn btn-outline-primary" href="{{ url_for('search.search_page') }}">Новый поиск</a>
+    </div>
+
+    {% if history_items %}
+        <div class="list-group">
+            {% for item in history_items %}
+                <a
+                    class="list-group-item list-group-item-action py-3"
+                    href="{{ url_for('search.saved_search_results', request_id=item.request_id) }}"
+                >
+                    <div class="d-flex w-100 justify-content-between gap-3">
+                        <h2 class="h5 mb-1">{{ item.query_text }}</h2>
+                        <small class="text-muted text-nowrap">{{ item.executed_at.strftime("%d.%m.%Y %H:%M") }}</small>
+                    </div>
+                    <div class="text-secondary small">request_id={{ item.request_id }}</div>
+                </a>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="alert alert-secondary">
+            История пока пустая. Выполните первый поиск, чтобы здесь появился сохраненный запрос.
+        </div>
+    {% endif %}
+</section>
+{% endblock %}
