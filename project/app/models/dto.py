@@ -261,6 +261,30 @@ class SourceManagementPageDTO:
 
 
 @dataclass(slots=True)
+class SourceLogCreateDTO:
+    """Готовые данные для создания записи SourceLog."""
+
+    # Источник, к которому относится событие.
+    source_id: int
+    # Тип события из справочника EventType.
+    event_type_id: int
+    # Время записи события.
+    logged_at: datetime
+
+
+@dataclass(slots=True)
+class QueryLogCreateDTO:
+    """Готовые данные для создания записи QueryLog."""
+
+    # Поисковый запрос, к которому относится событие.
+    request_id: int
+    # Тип события из справочника EventType.
+    event_type_id: int
+    # Время записи события.
+    logged_at: datetime
+
+
+@dataclass(slots=True)
 class ReferenceValueCreateDTO:
     """Готовые данные для создания записи в справочнике."""
 
