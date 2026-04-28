@@ -151,6 +151,24 @@ class SearchHistoryItemDTO:
 
 
 @dataclass(slots=True)
+class SearchHistoryPageDTO:
+    """Страница истории поисковых запросов с данными для пагинации."""
+
+    # Запросы, которые нужно показать на текущей странице.
+    items: list[SearchHistoryItemDTO]
+    # Номер текущей страницы, начиная с 1.
+    page: int
+    # Максимальное количество запросов на странице.
+    per_page: int
+    # Общее количество сохраненных запросов.
+    total_count: int
+    # Есть ли предыдущая страница.
+    has_previous: bool
+    # Есть ли следующая страница.
+    has_next: bool
+
+
+@dataclass(slots=True)
 class SearchResultCreateDTO:
     """Готовые данные для создания записи SearchResult в базе данных."""
 

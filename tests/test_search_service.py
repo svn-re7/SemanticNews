@@ -50,6 +50,7 @@ class FakeRequestRepository:
         self.saved_request = saved_request
         self.saved_requests = saved_requests or []
         self.history_limit: int | None = None
+        self.history_offset: int | None = None
 
     def create(self, query_data) -> int:
         """Запомнить созданный запрос и вернуть стабильный id."""
@@ -63,7 +64,12 @@ class FakeRequestRepository:
     def list_requests(self, limit: int, offset: int = 0) -> list[Request]:
         """Вернуть последние запросы для истории поиска."""
         self.history_limit = limit
+        self.history_offset = offset
         return self.saved_requests[offset : offset + limit]
+
+    def count_requests(self) -> int:
+        """Вернуть общее количество тестовых запросов."""
+        return len(self.saved_requests)
 
 
 class FakeSearchResultRepository:
@@ -184,11 +190,12 @@ class SearchServiceTest(unittest.TestCase):
         self.assertEqual([item.position for item in result.items], [1, 2])
         self.assertFalse(embedding_service.was_called)
 
-    def test_get_search_history_returns_request_dtos_without_embedding_search(self) -> None:
-        """История поиска читается из RequestRepository и не запускает embedding/FAISS."""
+    def test_get_search_history_returns_paginated_request_dtos_without_embedding_search(self) -> None:
+        """История поиска читается постранично из RequestRepository и не запускает embedding/FAISS."""
         first_request = self._request(request_id=77, query_text="экономика", executed_at=datetime(2026, 1, 1, 12, 0))
         second_request = self._request(request_id=76, query_text="спорт", executed_at=datetime(2026, 1, 1, 11, 0))
-        request_repository = FakeRequestRepository(saved_requests=[first_request, second_request])
+        third_request = self._request(request_id=75, query_text="политика", executed_at=datetime(2026, 1, 1, 10, 0))
+        request_repository = FakeRequestRepository(saved_requests=[first_request, second_request, third_request])
         embedding_service = FailingEmbeddingService()
 
         service = SearchService(
@@ -198,11 +205,16 @@ class SearchServiceTest(unittest.TestCase):
             search_result_repository=FakeSearchResultRepository(),
         )
 
-        history = service.get_search_history(limit=10)
+        history = service.get_search_history(page=2, per_page=2)
 
-        self.assertEqual(request_repository.history_limit, 10)
-        self.assertEqual([item.request_id for item in history], [77, 76])
-        self.assertEqual([item.query_text for item in history], ["экономика", "спорт"])
+        self.assertEqual(request_repository.history_limit, 2)
+        self.assertEqual(request_repository.history_offset, 2)
+        self.assertEqual([item.request_id for item in history.items], [75])
+        self.assertEqual(history.page, 2)
+        self.assertEqual(history.per_page, 2)
+        self.assertEqual(history.total_count, 3)
+        self.assertTrue(history.has_previous)
+        self.assertFalse(history.has_next)
         self.assertFalse(embedding_service.was_called)
 
     def _write_test_index(self, index_path: Path) -> None:

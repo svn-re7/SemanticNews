@@ -14,9 +14,9 @@
         <a class="btn btn-outline-primary" href="{{ url_for('search.search_page') }}">Новый поиск</a>
     </div>
 
-    {% if history_items %}
+    {% if history_page.items %}
         <div class="list-group">
-            {% for item in history_items %}
+            {% for item in history_page.items %}
                 <a
                     class="list-group-item list-group-item-action py-3"
                     href="{{ url_for('search.saved_search_results', request_id=item.request_id) }}"
@@ -28,6 +28,35 @@
                     <div class="text-secondary small">request_id={{ item.request_id }}</div>
                 </a>
             {% endfor %}
+        </div>
+
+        <div class="d-flex align-items-center justify-content-between gap-3 mt-4">
+            <div class="text-muted small">
+                Страница {{ history_page.page }} · всего запросов: {{ history_page.total_count }}
+            </div>
+            <div class="btn-group">
+                {% if history_page.has_previous %}
+                    <a
+                        class="btn btn-outline-secondary"
+                        href="{{ url_for('search.search_history', page=history_page.page - 1) }}"
+                    >
+                        Назад
+                    </a>
+                {% else %}
+                    <button class="btn btn-outline-secondary" type="button" disabled>Назад</button>
+                {% endif %}
+
+                {% if history_page.has_next %}
+                    <a
+                        class="btn btn-outline-secondary"
+                        href="{{ url_for('search.search_history', page=history_page.page + 1) }}"
+                    >
+                        Вперед
+                    </a>
+                {% else %}
+                    <button class="btn btn-outline-secondary" type="button" disabled>Вперед</button>
+                {% endif %}
+            </div>
         </div>
     {% else %}
         <div class="alert alert-secondary">

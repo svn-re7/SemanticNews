@@ -10,6 +10,7 @@ import numpy as np
 from app.config import Config
 from app.models.dto import (
     SearchHistoryItemDTO,
+    SearchHistoryPageDTO,
     SearchQueryDTO,
     SearchResponseDTO,
     SearchResultCreateDTO,
@@ -127,21 +128,34 @@ class SearchService:
             items=items,
         )
 
-    def get_search_history(self, limit: int = 50) -> list[SearchHistoryItemDTO]:
-        """Вернуть последние поисковые запросы для страницы истории."""
-        if limit <= 0:
-            raise ValueError("Количество запросов в истории должно быть положительным.")
+    def get_search_history(self, *, page: int = 1, per_page: int = 20) -> SearchHistoryPageDTO:
+        """Вернуть страницу истории поисковых запросов."""
+        if page <= 0:
+            raise ValueError("Номер страницы истории должен быть положительным.")
+        if per_page <= 0:
+            raise ValueError("Количество запросов на странице должно быть положительным.")
 
+        # Offset считает, сколько более новых запросов нужно пропустить перед текущей страницей.
+        offset = (page - 1) * per_page
+        total_count = self.request_repository.count_requests()
         # История строится только по таблице Request: сами результаты уже открываются отдельным route по request_id.
-        requests = self.request_repository.list_requests(limit=limit)
-        return [
-            SearchHistoryItemDTO(
-                request_id=saved_request.id,
-                query_text=saved_request.query_text,
-                executed_at=saved_request.executed_at,
-            )
-            for saved_request in requests
-        ]
+        requests = self.request_repository.list_requests(limit=per_page, offset=offset)
+
+        return SearchHistoryPageDTO(
+            items=[
+                SearchHistoryItemDTO(
+                    request_id=saved_request.id,
+                    query_text=saved_request.query_text,
+                    executed_at=saved_request.executed_at,
+                )
+                for saved_request in requests
+            ],
+            page=page,
+            per_page=per_page,
+            total_count=total_count,
+            has_previous=page > 1,
+            has_next=page * per_page < total_count,
+        )
 
     def _read_index(self):
         """Прочитать FAISS-индекс с диска."""

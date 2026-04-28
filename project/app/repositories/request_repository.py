@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.models.dto import SearchQueryDTO
 from app.models.entities import Request
@@ -42,3 +42,9 @@ class RequestRepository:
                 .offset(offset)
             )
             return session.execute(stmt).scalars().all()
+
+    def count_requests(self) -> int:
+        """Вернуть общее количество сохраненных поисковых запросов."""
+        with get_session() as session:
+            stmt = select(func.count(Request.id))
+            return session.execute(stmt).scalar_one()
