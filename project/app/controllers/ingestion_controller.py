@@ -24,6 +24,8 @@ class IngestionTaskState:
     error: str | None = None
     mode: str | None = None
     article_count_before: int | None = None
+    should_stop: bool = False
+    stopped: bool = False
 
 
 _task_state = IngestionTaskState()
@@ -53,6 +55,8 @@ def start_ingestion():
             _task_state.error = None
             _task_state.mode = None
             _task_state.article_count_before = None
+            _task_state.should_stop = False
+            _task_state.stopped = False
 
     if not should_start:
         return jsonify(_serialize_state(started=False))
@@ -61,6 +65,17 @@ def start_ingestion():
     thread = Thread(target=_run_ingestion_task, daemon=True)
     thread.start()
     return jsonify(_serialize_state(started=True)), 202
+
+
+@ingestion_bp.post("/stop")
+def stop_ingestion():
+    """Запросить мягкую остановку текущего фонового ingestion."""
+    with _task_lock:
+        if _task_state.is_running:
+            _task_state.should_stop = True
+            _task_state.message = "Запрошена остановка сбора. Текущая пачка будет завершена."
+
+    return jsonify(_serialize_state())
 
 
 @ingestion_bp.get("/status")
@@ -72,7 +87,7 @@ def ingestion_status():
 def _run_ingestion_task() -> None:
     """Выполнить ingestion всех активных источников и обновить in-memory статус."""
     try:
-        scheduled_result = IngestionService().run_scheduled_ingestion()
+        scheduled_result = IngestionService().run_scheduled_ingestion(should_stop=_should_stop_requested)
     except Exception as error:
         # В фоне нельзя отдавать traceback пользователю, поэтому сохраняем краткую причину в статус.
         with _task_lock:
@@ -91,11 +106,24 @@ def _run_ingestion_task() -> None:
         _task_state.results = results
         _task_state.mode = scheduled_result.mode
         _task_state.article_count_before = scheduled_result.article_count_before
-        _task_state.message = (
-            f"Сбор завершен в режиме {scheduled_result.mode}: "
-            f"сохранено={saved_total}, проиндексировано={indexed_total}."
-        )
+        _task_state.stopped = scheduled_result.stopped
+        if scheduled_result.stopped:
+            _task_state.message = (
+                f"Сбор остановлен пользователем в режиме {scheduled_result.mode}: "
+                f"сохранено={saved_total}, проиндексировано={indexed_total}."
+            )
+        else:
+            _task_state.message = (
+                f"Сбор завершен в режиме {scheduled_result.mode}: "
+                f"сохранено={saved_total}, проиндексировано={indexed_total}."
+            )
         _task_state.error = None
+
+
+def _should_stop_requested() -> bool:
+    """Проверить, запросил ли пользователь мягкую остановку фоновой задачи."""
+    with _task_lock:
+        return _task_state.should_stop
 
 
 def _serialize_state(*, started: bool | None = None) -> dict:
@@ -109,6 +137,8 @@ def _serialize_state(*, started: bool | None = None) -> dict:
             "error": _task_state.error,
             "mode": _task_state.mode,
             "article_count_before": _task_state.article_count_before,
+            "should_stop": _task_state.should_stop,
+            "stopped": _task_state.stopped,
             "results": [
                 {
                     "source_id": result.source_id,

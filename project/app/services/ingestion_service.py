@@ -35,6 +35,7 @@ class IngestionResult:
     skipped_empty_text: int = 0
     skipped_missing_type: int = 0
     indexed: int = 0
+    stopped: bool = False
 
 
 @dataclass(slots=True)
@@ -44,6 +45,7 @@ class ScheduledIngestionResult:
     mode: str
     article_count_before: int
     results: list[IngestionResult]
+    stopped: bool = False
 
 
 class IngestionService:
@@ -91,6 +93,7 @@ class IngestionService:
         incremental_sitemap_limit: int = 5,
         batch_size: int = 100,
         article_request_delay_seconds: float = 0.5,
+        should_stop: Callable[[], bool] | None = None,
     ) -> ScheduledIngestionResult:
         """Запустить плановый сбор и выбрать initial или incremental режим по размеру БД."""
         if initial_article_threshold < 0:
@@ -110,6 +113,7 @@ class IngestionService:
                 batch_size=batch_size,
                 article_request_delay_seconds=article_request_delay_seconds,
                 ignore_last_indexed_at=True,
+                should_stop=should_stop,
             )
         else:
             # В incremental-режиме основной стоппер - last_indexed_at и серия старых статей.
@@ -120,12 +124,18 @@ class IngestionService:
                 max_articles_per_source=incremental_safety_max_articles_per_source,
                 batch_size=batch_size,
                 article_request_delay_seconds=article_request_delay_seconds,
+                should_stop=should_stop,
             )
+
+        stopped = any(result.stopped for result in results)
+        if not results and should_stop is not None and should_stop():
+            stopped = True
 
         return ScheduledIngestionResult(
             mode=mode,
             article_count_before=article_count_before,
             results=results,
+            stopped=stopped,
         )
 
     def ingest_source_by_id(
@@ -137,6 +147,7 @@ class IngestionService:
         batch_size: int = 100,
         article_request_delay_seconds: float = 0.5,
         ignore_last_indexed_at: bool = False,
+        should_stop: Callable[[], bool] | None = None,
     ) -> IngestionResult:
         """Собрать статьи из одного источника и сохранить новые записи в SQLite."""
         # Сервис принимает простой id, но дальше работает с полноценной ORM-сущностью источника.
@@ -151,6 +162,7 @@ class IngestionService:
             batch_size=batch_size,
             article_request_delay_seconds=article_request_delay_seconds,
             ignore_last_indexed_at=ignore_last_indexed_at,
+            should_stop=should_stop,
         )
 
     def ingest_active_sources(
@@ -161,12 +173,16 @@ class IngestionService:
         batch_size: int = 100,
         article_request_delay_seconds: float = 0.5,
         ignore_last_indexed_at: bool = False,
+        should_stop: Callable[[], bool] | None = None,
     ) -> list[IngestionResult]:
         """Собрать статьи из всех активных источников."""
         results: list[IngestionResult] = []
 
         # Репозиторий отвечает только за выборку активных источников, а сам сценарий сбора остается в сервисе.
         for source in self.source_repository.list_sources(only_active=True):
+            if should_stop is not None and should_stop():
+                break
+
             results.append(
                 self.ingest_source(
                     source,
@@ -175,8 +191,11 @@ class IngestionService:
                     batch_size=batch_size,
                     article_request_delay_seconds=article_request_delay_seconds,
                     ignore_last_indexed_at=ignore_last_indexed_at,
+                    should_stop=should_stop,
                 )
             )
+            if results[-1].stopped:
+                break
 
         return results
 
@@ -189,6 +208,7 @@ class IngestionService:
         batch_size: int = 100,
         article_request_delay_seconds: float = 0.5,
         ignore_last_indexed_at: bool = False,
+        should_stop: Callable[[], bool] | None = None,
     ) -> IngestionResult:
         """Выполнить полный сценарий ingestion для уже найденного источника."""
         if sitemap_limit <= 0:
@@ -224,6 +244,15 @@ class IngestionService:
                     # FAISS обновляем после каждой успешной пачки SQLite-записей, чтобы поиск видел статьи постепенно.
                     append_result = self.indexing_service.append_articles_by_ids(saved_article_ids)
                     result.indexed += append_result.articles_count
+
+                if should_stop is not None and should_stop():
+                    # Остановка мягкая: уже сохраненная пачка остается в SQLite/FAISS, следующую пачку не начинаем.
+                    result.stopped = True
+                    break
+
+            if result.stopped:
+                logger.info("Ingestion source_id=%s остановлен пользователем после текущей пачки.", source.id)
+                return result
 
             # Фиксируем время попытки ingestion для источника, чтобы потом можно было показывать его в UI.
             self.source_repository.update_last_indexed_at(source.id, datetime.now())

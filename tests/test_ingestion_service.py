@@ -75,6 +75,31 @@ class IngestionServiceTest(unittest.TestCase):
         self.assertEqual(result.indexed, 3)
         self.assertEqual(indexing_service.append_calls, [[101, 102], [103]])
 
+    def test_ingest_source_stops_between_batches(self) -> None:
+        """Остановка между пачками сохраняет уже обработанную пачку и не начинает следующую."""
+        indexing_service = FakeIndexingService()
+        source_repository = FakeSourceRepository(build_fake_source())
+        service = IngestionService(
+            source_repository=source_repository,
+            news_repository=FakeNewsRepository(created_ids=[101, 102, 103]),
+            article_type_repository=FakeArticleTypeRepository(),
+            indexing_service=indexing_service,
+            logging_service=FakeLoggingService(),
+            sitemap_batch_parser=fake_sitemap_batch_parser,
+        )
+
+        result = service.ingest_source(
+            source_repository.source,
+            max_articles=3,
+            batch_size=2,
+            should_stop=lambda: True,
+        )
+
+        self.assertTrue(result.stopped)
+        self.assertEqual(result.saved, 2)
+        self.assertEqual(indexing_service.append_calls, [[101, 102]])
+        self.assertIsNone(source_repository.last_indexed_source_id)
+
     def test_ingest_source_passes_article_delay_to_batch_parser(self) -> None:
         """Ingestion передает parser-слою настройку паузы между HTML-запросами."""
         parser_kwargs: dict = {}

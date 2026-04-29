@@ -18,9 +18,14 @@
                 <h2 class="h5 mb-1">Ручной запуск ingestion</h2>
                 <p class="text-muted mb-0">Для MVP используется один фоновый запуск внутри Flask-процесса.</p>
             </div>
-            <button class="btn btn-primary" id="ingestion-start-button" type="button">
-                Запустить сбор новостей
-            </button>
+            <div class="d-flex flex-wrap gap-2">
+                <button class="btn btn-primary" id="ingestion-start-button" type="button">
+                    Запустить сбор новостей
+                </button>
+                <button class="btn btn-outline-danger" id="ingestion-stop-button" type="button" disabled>
+                    Остановить сбор
+                </button>
+            </div>
         </div>
     </div>
 
@@ -29,17 +34,29 @@
     </div>
 
     <form id="ingestion-start-form" method="post" action="{{ url_for('ingestion.start_ingestion') }}"></form>
+    <form id="ingestion-stop-form" method="post" action="{{ url_for('ingestion.stop_ingestion') }}"></form>
 </section>
 
 <script>
 (() => {
     const button = document.querySelector("#ingestion-start-button");
+    const stopButton = document.querySelector("#ingestion-stop-button");
     const form = document.querySelector("#ingestion-start-form");
+    const stopForm = document.querySelector("#ingestion-stop-form");
     const statusBlock = document.querySelector("#ingestion-status");
     const statusUrl = statusBlock.dataset.statusUrl;
 
     const renderStatus = (data) => {
         const parts = [data.message];
+        if (data.mode) {
+            parts.push(`Режим: ${data.mode}`);
+        }
+        if (data.article_count_before !== null && data.article_count_before !== undefined) {
+            parts.push(`Статей до запуска: ${data.article_count_before}`);
+        }
+        if (data.should_stop && data.is_running) {
+            parts.push("Остановка запрошена.");
+        }
         if (data.started_at) {
             parts.push(`Старт: ${data.started_at}`);
         }
@@ -53,6 +70,7 @@
         statusBlock.textContent = parts.join(" ");
         statusBlock.className = data.error ? "alert alert-danger" : data.is_running ? "alert alert-info" : "alert alert-secondary";
         button.disabled = data.is_running;
+        stopButton.disabled = !data.is_running || data.should_stop;
     };
 
     const loadStatus = async () => {
@@ -63,6 +81,12 @@
     button.addEventListener("click", async () => {
         button.disabled = true;
         const response = await fetch(form.action, { method: "POST" });
+        renderStatus(await response.json());
+    });
+
+    stopButton.addEventListener("click", async () => {
+        stopButton.disabled = true;
+        const response = await fetch(stopForm.action, { method: "POST" });
         renderStatus(await response.json());
     });
 
