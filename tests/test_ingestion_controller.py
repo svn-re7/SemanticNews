@@ -9,6 +9,8 @@ PROJECT_DIR = Path(__file__).resolve().parents[1] / "project"
 sys.path.insert(0, str(PROJECT_DIR))
 
 from app import create_app  # noqa: E402
+from app.controllers import ingestion_controller  # noqa: E402
+from app.services.ingestion_service import IngestionResult, ScheduledIngestionResult  # noqa: E402
 
 
 class IngestionControllerTest(unittest.TestCase):
@@ -33,6 +35,61 @@ class IngestionControllerTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content_type, "application/json")
         self.assertIn("is_running", response.json)
+
+    def test_background_task_uses_scheduled_ingestion(self) -> None:
+        """Фоновая задача запускает умный initial/incremental сценарий ingestion."""
+        original_service = ingestion_controller.IngestionService
+        fake_service = FakeScheduledIngestionService
+        fake_service.was_called = False
+
+        try:
+            ingestion_controller.IngestionService = fake_service
+            ingestion_controller._run_ingestion_task()
+            payload = ingestion_controller._serialize_state()
+        finally:
+            ingestion_controller.IngestionService = original_service
+            reset_ingestion_state()
+
+        self.assertTrue(fake_service.was_called)
+        self.assertEqual(payload["mode"], "initial")
+        self.assertEqual(payload["article_count_before"], 250)
+        self.assertEqual(payload["results"][0]["saved"], 2)
+
+
+class FakeScheduledIngestionService:
+    """Подменный ingestion-сервис для проверки контроллера без реального парсинга."""
+
+    was_called = False
+
+    def run_scheduled_ingestion(self) -> ScheduledIngestionResult:
+        """Вернуть готовый результат планового сбора."""
+        type(self).was_called = True
+        return ScheduledIngestionResult(
+            mode="initial",
+            article_count_before=250,
+            results=[
+                IngestionResult(
+                    source_id=5,
+                    source_base_url="https://example.test/sitemap.xml",
+                    found=2,
+                    saved=2,
+                    indexed=2,
+                )
+            ],
+        )
+
+
+def reset_ingestion_state() -> None:
+    """Вернуть in-memory статус ingestion к безопасному начальному состоянию."""
+    with ingestion_controller._task_lock:
+        ingestion_controller._task_state.is_running = False
+        ingestion_controller._task_state.started_at = None
+        ingestion_controller._task_state.finished_at = None
+        ingestion_controller._task_state.message = "Сбор новостей еще не запускался."
+        ingestion_controller._task_state.results = []
+        ingestion_controller._task_state.error = None
+        ingestion_controller._task_state.mode = None
+        ingestion_controller._task_state.article_count_before = None
 
 
 if __name__ == "__main__":

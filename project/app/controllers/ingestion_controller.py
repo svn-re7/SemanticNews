@@ -22,6 +22,8 @@ class IngestionTaskState:
     message: str = "Сбор новостей еще не запускался."
     results: list[IngestionResult] = field(default_factory=list)
     error: str | None = None
+    mode: str | None = None
+    article_count_before: int | None = None
 
 
 _task_state = IngestionTaskState()
@@ -49,6 +51,8 @@ def start_ingestion():
             _task_state.message = "Сбор новостей запущен."
             _task_state.results = []
             _task_state.error = None
+            _task_state.mode = None
+            _task_state.article_count_before = None
 
     if not should_start:
         return jsonify(_serialize_state(started=False))
@@ -68,11 +72,8 @@ def ingestion_status():
 def _run_ingestion_task() -> None:
     """Выполнить ingestion всех активных источников и обновить in-memory статус."""
     try:
-        results = IngestionService().ingest_active_sources(
-            sitemap_limit=1,
-            max_articles_per_source=10,
-        )
-    except Exception as error:  # noqa: BLE001
+        scheduled_result = IngestionService().run_scheduled_ingestion()
+    except Exception as error:
         # В фоне нельзя отдавать traceback пользователю, поэтому сохраняем краткую причину в статус.
         with _task_lock:
             _task_state.is_running = False
@@ -81,13 +82,19 @@ def _run_ingestion_task() -> None:
             _task_state.message = "Сбор новостей завершился с ошибкой."
         return
 
+    results = scheduled_result.results
     saved_total = sum(result.saved for result in results)
     indexed_total = sum(result.indexed for result in results)
     with _task_lock:
         _task_state.is_running = False
         _task_state.finished_at = datetime.now()
         _task_state.results = results
-        _task_state.message = f"Сбор завершен: сохранено={saved_total}, проиндексировано={indexed_total}."
+        _task_state.mode = scheduled_result.mode
+        _task_state.article_count_before = scheduled_result.article_count_before
+        _task_state.message = (
+            f"Сбор завершен в режиме {scheduled_result.mode}: "
+            f"сохранено={saved_total}, проиндексировано={indexed_total}."
+        )
         _task_state.error = None
 
 
@@ -100,6 +107,8 @@ def _serialize_state(*, started: bool | None = None) -> dict:
             "finished_at": _format_datetime(_task_state.finished_at),
             "message": _task_state.message,
             "error": _task_state.error,
+            "mode": _task_state.mode,
+            "article_count_before": _task_state.article_count_before,
             "results": [
                 {
                     "source_id": result.source_id,
