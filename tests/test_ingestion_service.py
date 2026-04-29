@@ -75,6 +75,35 @@ class IngestionServiceTest(unittest.TestCase):
         self.assertEqual(result.indexed, 3)
         self.assertEqual(indexing_service.append_calls, [[101, 102], [103]])
 
+    def test_ingest_source_passes_article_delay_to_batch_parser(self) -> None:
+        """Ingestion передает parser-слою настройку паузы между HTML-запросами."""
+        parser_kwargs: dict = {}
+        source = Source(
+            source_type_id=1,
+            base_url="https://example.test/sitemap.xml",
+            name="Тестовый источник",
+            is_active=True,
+        )
+        source.id = 5
+
+        def fake_parser(*args, **kwargs):
+            """Запомнить параметры parser-вызова и вернуть пустой результат."""
+            parser_kwargs.update(kwargs)
+            return iter([])
+
+        service = IngestionService(
+            source_repository=FakeSourceRepository(source),
+            news_repository=FakeNewsRepository(created_ids=[]),
+            article_type_repository=FakeArticleTypeRepository(),
+            indexing_service=FakeIndexingService(),
+            logging_service=FakeLoggingService(),
+            sitemap_batch_parser=fake_parser,
+        )
+
+        service.ingest_source(source, article_request_delay_seconds=1.25)
+
+        self.assertEqual(parser_kwargs["article_request_delay_seconds"], 1.25)
+
     def test_ingest_source_logs_failed_event_when_parser_fails(self) -> None:
         """Если parser падает, ingestion пишет событие ingestion_failed и пробрасывает ошибку."""
         logging_service = FakeLoggingService()

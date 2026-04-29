@@ -79,6 +79,7 @@ class IngestionService:
         sitemap_limit: int = 5,
         max_articles: int = 10,
         batch_size: int = 100,
+        article_request_delay_seconds: float = 0.5,
     ) -> IngestionResult:
         """Собрать статьи из одного источника и сохранить новые записи в SQLite."""
         # Сервис принимает простой id, но дальше работает с полноценной ORM-сущностью источника.
@@ -91,6 +92,7 @@ class IngestionService:
             sitemap_limit=sitemap_limit,
             max_articles=max_articles,
             batch_size=batch_size,
+            article_request_delay_seconds=article_request_delay_seconds,
         )
 
     def ingest_active_sources(
@@ -99,6 +101,7 @@ class IngestionService:
         sitemap_limit: int = 5,
         max_articles_per_source: int = 10,
         batch_size: int = 100,
+        article_request_delay_seconds: float = 0.5,
     ) -> list[IngestionResult]:
         """Собрать статьи из всех активных источников."""
         results: list[IngestionResult] = []
@@ -111,6 +114,7 @@ class IngestionService:
                     sitemap_limit=sitemap_limit,
                     max_articles=max_articles_per_source,
                     batch_size=batch_size,
+                    article_request_delay_seconds=article_request_delay_seconds,
                 )
             )
 
@@ -123,6 +127,7 @@ class IngestionService:
         sitemap_limit: int = 5,
         max_articles: int = 10,
         batch_size: int = 100,
+        article_request_delay_seconds: float = 0.5,
     ) -> IngestionResult:
         """Выполнить полный сценарий ingestion для уже найденного источника."""
         if sitemap_limit <= 0:
@@ -131,6 +136,8 @@ class IngestionService:
             raise ValueError("max_articles должен быть положительным числом")
         if batch_size <= 0:
             raise ValueError("batch_size должен быть положительным числом")
+        if article_request_delay_seconds < 0:
+            raise ValueError("article_request_delay_seconds не может быть отрицательным")
 
         self.logging_service.log_source_event(source_id=source.id, event_code="ingestion_started")
         try:
@@ -146,6 +153,7 @@ class IngestionService:
                 max_articles=max_articles,
                 stop_after_published_at=source.last_indexed_at,
                 batch_size=batch_size,
+                article_request_delay_seconds=article_request_delay_seconds,
             ):
                 result.found += len(extracted_articles)
                 saved_article_ids = self._save_extracted_article_batch(source, extracted_articles, result)

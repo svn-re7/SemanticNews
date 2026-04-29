@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 import xml.etree.ElementTree as ET
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import nullcontext
 from datetime import datetime, timezone
+from time import sleep
 from urllib.parse import parse_qs, urlparse
 
 from requests import Session
@@ -101,11 +102,15 @@ def iter_extracted_article_batches_from_sitemap_index(
     stop_after_published_at: datetime | None = None,
     stop_after_old_articles: int = 3,
     batch_size: int = 100,
+    article_request_delay_seconds: float = 0.0,
+    sleep_function: Callable[[float], None] = sleep,
     session: Session | None = None,
 ) -> Iterator[list[ExtractedArticle]]:
     """Собирать статьи из sitemap-индекса и отдавать их готовыми пачками."""
     if batch_size <= 0:
         raise ValueError("batch_size должен быть положительным числом")
+    if article_request_delay_seconds < 0:
+        raise ValueError("article_request_delay_seconds не может быть отрицательным")
 
     with _session_context(session) as active_session:
         # Это основной end-to-end сценарий парсинга:
@@ -116,7 +121,7 @@ def iter_extracted_article_batches_from_sitemap_index(
             session=active_session,
         )
         if not sitemap_entries:
-            return []
+            return
 
         article_references = collect_article_references(
             sitemap_entries,
@@ -129,6 +134,7 @@ def iter_extracted_article_batches_from_sitemap_index(
         article_batch: list[ExtractedArticle] = []
         old_articles_in_row = 0
         extracted_count = 0
+        has_requested_article = False
         for article_reference in article_references:
             if _is_not_newer_than(article_reference.lastmod, stop_after_published_at):
                 old_articles_in_row += 1
@@ -139,6 +145,10 @@ def iter_extracted_article_batches_from_sitemap_index(
                 continue
 
             try:
+                if has_requested_article and article_request_delay_seconds > 0:
+                    # Пауза ставится именно между HTML-запросами, чтобы не долбить сайт непрерывно.
+                    sleep_function(article_request_delay_seconds)
+                has_requested_article = True
                 article = extract_article(article_reference.url, session=active_session)
             except ParserError as error:
                 logger.warning("Не удалось извлечь статью %s: %s", article_reference.url, error)

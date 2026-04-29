@@ -73,6 +73,34 @@ class SitemapParserTest(unittest.TestCase):
             ["https://example.test/3"],
         ])
 
+    def test_iter_extracted_article_batches_waits_between_article_requests(self) -> None:
+        """Sitemap-парсер делает паузу между скачиваниями HTML-страниц статей."""
+        references = [
+            ArticleReference(url="https://example.test/1", lastmod=datetime(2026, 1, 1)),
+            ArticleReference(url="https://example.test/2", lastmod=datetime(2026, 1, 2)),
+            ArticleReference(url="https://example.test/3", lastmod=datetime(2026, 1, 3)),
+        ]
+        sleep_calls: list[float] = []
+
+        with (
+            patch(
+                "app.parsers.sitemap_parser.extract_sitemap_entries",
+                return_value=[SitemapEntry(url="https://example.test/sitemap.xml")],
+            ),
+            patch("app.parsers.sitemap_parser.collect_article_references", return_value=references),
+            patch("app.parsers.sitemap_parser.extract_article", side_effect=fake_extract_article),
+        ):
+            list(
+                iter_extracted_article_batches_from_sitemap_index(
+                    "https://example.test/sitemap-index.xml",
+                    max_articles=3,
+                    article_request_delay_seconds=0.5,
+                    sleep_function=sleep_calls.append,
+                )
+            )
+
+        self.assertEqual(sleep_calls, [0.5, 0.5])
+
 
 def fake_extract_article(url: str, **kwargs) -> ExtractedArticle:
     """Вернуть тестовую статью по ссылке без сетевого запроса."""
