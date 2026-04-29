@@ -87,14 +87,14 @@ def _extract_text_from_html(html: str, soup: BeautifulSoup, article_url: str) ->
     # Для известных источников сначала берем точный контейнер статьи.
     # Это уменьшает риск захватить меню, похожие материалы или продублированные блоки страницы.
     source_specific_text = _extract_text_with_source_specific_rules(soup, article_url)
-    if source_specific_text:
+    if source_specific_text is not None:
         return source_specific_text
 
     # Если специальных правил нет или разметка изменилась, оставляем общий fallback через trafilatura.
     return _extract_text_with_trafilatura(html, article_url)
 
 
-def _extract_text_with_source_specific_rules(soup: BeautifulSoup, article_url: str) -> str:
+def _extract_text_with_source_specific_rules(soup: BeautifulSoup, article_url: str) -> str | None:
     """Извлечь текст по точным CSS-правилам для поддержанных новостных источников."""
     host = urlparse(article_url).netloc.lower()
 
@@ -118,9 +118,12 @@ def _extract_text_with_source_specific_rules(soup: BeautifulSoup, article_url: s
                 "article",
             ],
         )
-        return _remove_known_text_prefix(text, "Выделить главное Вкл Выкл")
+        text = _remove_known_text_prefix(text, "Выделить главное Вкл Выкл")
+        if _is_service_only_text(text):
+            return ""
+        return text
 
-    return ""
+    return None
 
 
 def _extract_text_from_first_matching_selector(soup: BeautifulSoup, selectors: list[str]) -> str:
@@ -143,6 +146,14 @@ def _remove_known_text_prefix(text: str, prefix: str) -> str:
         return text.removeprefix(prefix).strip()
 
     return text
+
+
+def _is_service_only_text(text: str) -> bool:
+    """Проверить, что вместо статьи извлечены только служебные элементы страницы."""
+    service_phrases = {
+        "Поделиться: Читайте также",
+    }
+    return text in service_phrases
 
 
 def _extract_text_with_trafilatura(html: str, article_url: str) -> str:

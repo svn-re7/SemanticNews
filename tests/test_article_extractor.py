@@ -72,6 +72,27 @@ class ArticleExtractorTest(unittest.TestCase):
 
         self.assertEqual(text, "Дом из фильма выставлен на продажу.")
 
+    def test_ignores_izvestia_video_page_without_real_article_text(self) -> None:
+        """Видео-страница Известий без текста статьи считается пустой."""
+        html = """
+        <html>
+            <body>
+                <article>
+                    <div>Выделить главное</div>
+                    <div>Вкл</div>
+                    <div>Выкл</div>
+                    <div>Поделиться:</div>
+                    <div>Читайте также</div>
+                </article>
+            </body>
+        </html>
+        """
+        soup = BeautifulSoup(html, "html.parser")
+
+        text = _extract_text_from_html(html, soup, "https://iz.ru/123/video/example")
+
+        self.assertEqual(text, "")
+
 
 if __name__ == "__main__":
     unittest.main()
