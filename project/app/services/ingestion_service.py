@@ -109,6 +109,7 @@ class IngestionService:
                 max_articles_per_source=initial_articles_per_source,
                 batch_size=batch_size,
                 article_request_delay_seconds=article_request_delay_seconds,
+                ignore_last_indexed_at=True,
             )
         else:
             # В incremental-режиме основной стоппер - last_indexed_at и серия старых статей.
@@ -135,6 +136,7 @@ class IngestionService:
         max_articles: int = 10,
         batch_size: int = 100,
         article_request_delay_seconds: float = 0.5,
+        ignore_last_indexed_at: bool = False,
     ) -> IngestionResult:
         """Собрать статьи из одного источника и сохранить новые записи в SQLite."""
         # Сервис принимает простой id, но дальше работает с полноценной ORM-сущностью источника.
@@ -148,6 +150,7 @@ class IngestionService:
             max_articles=max_articles,
             batch_size=batch_size,
             article_request_delay_seconds=article_request_delay_seconds,
+            ignore_last_indexed_at=ignore_last_indexed_at,
         )
 
     def ingest_active_sources(
@@ -157,6 +160,7 @@ class IngestionService:
         max_articles_per_source: int = 10,
         batch_size: int = 100,
         article_request_delay_seconds: float = 0.5,
+        ignore_last_indexed_at: bool = False,
     ) -> list[IngestionResult]:
         """Собрать статьи из всех активных источников."""
         results: list[IngestionResult] = []
@@ -170,6 +174,7 @@ class IngestionService:
                     max_articles=max_articles_per_source,
                     batch_size=batch_size,
                     article_request_delay_seconds=article_request_delay_seconds,
+                    ignore_last_indexed_at=ignore_last_indexed_at,
                 )
             )
 
@@ -183,6 +188,7 @@ class IngestionService:
         max_articles: int = 10,
         batch_size: int = 100,
         article_request_delay_seconds: float = 0.5,
+        ignore_last_indexed_at: bool = False,
     ) -> IngestionResult:
         """Выполнить полный сценарий ingestion для уже найденного источника."""
         if sitemap_limit <= 0:
@@ -202,11 +208,12 @@ class IngestionService:
             )
 
             # Parser теперь отдает готовые статьи частями, чтобы длинная загрузка не ждала финала всего обхода.
+            stop_after_published_at = None if ignore_last_indexed_at else source.last_indexed_at
             for extracted_articles in self.sitemap_batch_parser(
                 source.base_url,
                 sitemap_limit=sitemap_limit,
                 max_articles=max_articles,
-                stop_after_published_at=source.last_indexed_at,
+                stop_after_published_at=stop_after_published_at,
                 batch_size=batch_size,
                 article_request_delay_seconds=article_request_delay_seconds,
             ):

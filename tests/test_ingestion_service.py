@@ -152,6 +152,7 @@ class IngestionServiceTest(unittest.TestCase):
         self.assertEqual(result.article_count_before, 250)
         self.assertEqual(parser_kwargs["max_articles"], 1000)
         self.assertEqual(parser_kwargs["batch_size"], 100)
+        self.assertIsNone(parser_kwargs["stop_after_published_at"])
 
     def test_run_scheduled_ingestion_uses_incremental_mode_when_database_has_enough_articles(self) -> None:
         """Если первичный корпус уже собран, плановый сбор запускает инкрементальное обновление."""
@@ -173,6 +174,7 @@ class IngestionServiceTest(unittest.TestCase):
         self.assertEqual(result.article_count_before, 1000)
         self.assertEqual(parser_kwargs["max_articles"], 5000)
         self.assertEqual(parser_kwargs["batch_size"], 100)
+        self.assertEqual(parser_kwargs["stop_after_published_at"], source.last_indexed_at)
 
 
 class FakeSourceRepository:
@@ -306,6 +308,7 @@ def build_fake_source() -> Source:
         is_active=True,
     )
     source.id = 5
+    source.last_indexed_at = datetime(2026, 4, 29, 22, 49, 20)
     return source
 
 
