@@ -37,6 +37,15 @@ class IngestionResult:
     indexed: int = 0
 
 
+@dataclass(slots=True)
+class ScheduledIngestionResult:
+    """Итог планового запуска ingestion с выбранным режимом загрузки."""
+
+    mode: str
+    article_count_before: int
+    results: list[IngestionResult]
+
+
 class IngestionService:
     """Сервис, который связывает парсер, DTO, репозитории и SQLite."""
 
@@ -70,6 +79,52 @@ class IngestionService:
             sitemap_batch_parser
             if sitemap_batch_parser is not None
             else iter_extracted_article_batches_from_sitemap_index
+        )
+
+    def run_scheduled_ingestion(
+        self,
+        *,
+        initial_article_threshold: int = 1000,
+        initial_articles_per_source: int = 1000,
+        initial_sitemap_limit: int = 20,
+        incremental_safety_max_articles_per_source: int = 5000,
+        incremental_sitemap_limit: int = 5,
+        batch_size: int = 100,
+        article_request_delay_seconds: float = 0.5,
+    ) -> ScheduledIngestionResult:
+        """Запустить плановый сбор и выбрать initial или incremental режим по размеру БД."""
+        if initial_article_threshold < 0:
+            raise ValueError("initial_article_threshold не может быть отрицательным")
+        if initial_articles_per_source <= 0:
+            raise ValueError("initial_articles_per_source должен быть положительным числом")
+        if incremental_safety_max_articles_per_source <= 0:
+            raise ValueError("incremental_safety_max_articles_per_source должен быть положительным числом")
+
+        article_count_before = self.news_repository.count_articles()
+        if article_count_before < initial_article_threshold:
+            # Первичный режим нужен, чтобы быстро набрать стартовый корпус для поиска и будущего ML.
+            mode = "initial"
+            results = self.ingest_active_sources(
+                sitemap_limit=initial_sitemap_limit,
+                max_articles_per_source=initial_articles_per_source,
+                batch_size=batch_size,
+                article_request_delay_seconds=article_request_delay_seconds,
+            )
+        else:
+            # В incremental-режиме основной стоппер - last_indexed_at и серия старых статей.
+            # Большой лимит здесь остается техническим предохранителем, а не целевым размером загрузки.
+            mode = "incremental"
+            results = self.ingest_active_sources(
+                sitemap_limit=incremental_sitemap_limit,
+                max_articles_per_source=incremental_safety_max_articles_per_source,
+                batch_size=batch_size,
+                article_request_delay_seconds=article_request_delay_seconds,
+            )
+
+        return ScheduledIngestionResult(
+            mode=mode,
+            article_count_before=article_count_before,
+            results=results,
         )
 
     def ingest_source_by_id(

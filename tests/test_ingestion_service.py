@@ -132,6 +132,48 @@ class IngestionServiceTest(unittest.TestCase):
             [(5, "ingestion_started"), (5, "ingestion_failed")],
         )
 
+    def test_run_scheduled_ingestion_uses_initial_mode_when_database_is_small(self) -> None:
+        """Если в БД меньше 1000 статей, плановый сбор запускает тяжелую первичную загрузку."""
+        parser_kwargs: dict = {}
+        source = build_fake_source()
+
+        service = IngestionService(
+            source_repository=FakeSourceRepository(source),
+            news_repository=FakeNewsRepository(created_ids=[], articles_count=250),
+            article_type_repository=FakeArticleTypeRepository(),
+            indexing_service=FakeIndexingService(),
+            logging_service=FakeLoggingService(),
+            sitemap_batch_parser=build_empty_recording_parser(parser_kwargs),
+        )
+
+        result = service.run_scheduled_ingestion()
+
+        self.assertEqual(result.mode, "initial")
+        self.assertEqual(result.article_count_before, 250)
+        self.assertEqual(parser_kwargs["max_articles"], 1000)
+        self.assertEqual(parser_kwargs["batch_size"], 100)
+
+    def test_run_scheduled_ingestion_uses_incremental_mode_when_database_has_enough_articles(self) -> None:
+        """Если первичный корпус уже собран, плановый сбор запускает инкрементальное обновление."""
+        parser_kwargs: dict = {}
+        source = build_fake_source()
+
+        service = IngestionService(
+            source_repository=FakeSourceRepository(source),
+            news_repository=FakeNewsRepository(created_ids=[], articles_count=1000),
+            article_type_repository=FakeArticleTypeRepository(),
+            indexing_service=FakeIndexingService(),
+            logging_service=FakeLoggingService(),
+            sitemap_batch_parser=build_empty_recording_parser(parser_kwargs),
+        )
+
+        result = service.run_scheduled_ingestion()
+
+        self.assertEqual(result.mode, "incremental")
+        self.assertEqual(result.article_count_before, 1000)
+        self.assertEqual(parser_kwargs["max_articles"], 5000)
+        self.assertEqual(parser_kwargs["batch_size"], 100)
+
 
 class FakeSourceRepository:
     """Тестовый репозиторий источников без обращения к SQLite."""
@@ -157,9 +199,10 @@ class FakeSourceRepository:
 class FakeNewsRepository:
     """Тестовый репозиторий статей, который выдает заранее заданные id."""
 
-    def __init__(self, created_ids: list[int]) -> None:
+    def __init__(self, created_ids: list[int], articles_count: int = 0) -> None:
         self.created_ids = created_ids
         self.created_index = 0
+        self.articles_count = articles_count
 
     def get_by_direct_url(self, direct_url: str):
         """В тесте считаем, что дублей нет."""
@@ -170,6 +213,10 @@ class FakeNewsRepository:
         created_id = self.created_ids[self.created_index]
         self.created_index += 1
         return created_id
+
+    def count_articles(self) -> int:
+        """Вернуть тестовое количество статей в БД."""
+        return self.articles_count
 
 
 class FakeArticleTypeRepository:
@@ -248,6 +295,29 @@ def fake_sitemap_batch_parser(*args, **kwargs):
 def failing_sitemap_batch_parser(*args, **kwargs):
     """Имитировать ошибку parser-слоя."""
     raise RuntimeError("parser failed")
+
+
+def build_fake_source() -> Source:
+    """Собрать тестовый источник для сценариев ingestion."""
+    source = Source(
+        source_type_id=1,
+        base_url="https://example.test/sitemap.xml",
+        name="Тестовый источник",
+        is_active=True,
+    )
+    source.id = 5
+    return source
+
+
+def build_empty_recording_parser(parser_kwargs: dict):
+    """Создать parser-заглушку, которая запоминает параметры и не возвращает статей."""
+
+    def fake_parser(*args, **kwargs):
+        """Запомнить параметры parser-вызова и вернуть пустой iterator пачек."""
+        parser_kwargs.update(kwargs)
+        return iter([])
+
+    return fake_parser
 
 
 if __name__ == "__main__":
