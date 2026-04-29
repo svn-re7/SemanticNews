@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import xml.etree.ElementTree as ET
+from collections.abc import Iterator
 from contextlib import nullcontext
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
@@ -102,6 +103,35 @@ def collect_extracted_articles_from_sitemap_index(
     session: Session | None = None,
 ) -> list[ExtractedArticle]:
     """Собрать статьи, начиная с sitemap-индекса и заканчивая извлечением HTML-контента."""
+    extracted_articles: list[ExtractedArticle] = []
+    for article_batch in iter_extracted_article_batches_from_sitemap_index(
+        sitemap_index_url,
+        sitemap_limit=sitemap_limit,
+        max_articles=max_articles,
+        stop_after_published_at=stop_after_published_at,
+        stop_after_old_articles=stop_after_old_articles,
+        batch_size=max_articles,
+        session=session,
+    ):
+        extracted_articles.extend(article_batch)
+
+    return extracted_articles
+
+
+def iter_extracted_article_batches_from_sitemap_index(
+    sitemap_index_url: str,
+    *,
+    sitemap_limit: int = 5,
+    max_articles: int = 10,
+    stop_after_published_at: datetime | None = None,
+    stop_after_old_articles: int = 3,
+    batch_size: int = 100,
+    session: Session | None = None,
+) -> Iterator[list[ExtractedArticle]]:
+    """Собирать статьи из sitemap-индекса и отдавать их готовыми пачками."""
+    if batch_size <= 0:
+        raise ValueError("batch_size должен быть положительным числом")
+
     with _session_context(session) as active_session:
         # Это основной end-to-end сценарий парсинга:
         # индекс -> sitemap -> ссылки -> реальные статьи.
@@ -119,10 +149,11 @@ def collect_extracted_articles_from_sitemap_index(
             session=active_session,
         )
         if not article_references:
-            return []
+            return
 
-        extracted_articles: list[ExtractedArticle] = []
+        article_batch: list[ExtractedArticle] = []
         old_articles_in_row = 0
+        extracted_count = 0
         for article_reference in article_references:
             if _is_not_newer_than(article_reference.lastmod, stop_after_published_at):
                 old_articles_in_row += 1
@@ -148,11 +179,19 @@ def collect_extracted_articles_from_sitemap_index(
                 continue
 
             old_articles_in_row = 0
-            extracted_articles.append(article)
-            if len(extracted_articles) >= max_articles:
+            article_batch.append(article)
+            extracted_count += 1
+
+            # Пачку отдаем сразу, чтобы верхний слой мог сохранить ее в SQLite и обновить FAISS.
+            if len(article_batch) >= batch_size:
+                yield article_batch
+                article_batch = []
+
+            if extracted_count >= max_articles:
                 break
 
-        return extracted_articles
+        if article_batch:
+            yield article_batch
 
 
 def _parse_xml(xml_text: str, source_url: str) -> ET.Element:

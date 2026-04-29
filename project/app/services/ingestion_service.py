@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -9,7 +9,11 @@ from sqlalchemy.exc import IntegrityError
 
 from app.models.dto import ArticleCreateDTO, ParsedArticleDTO
 from app.models.entities import Source
-from app.parsers import ExtractedArticle, collect_extracted_articles_from_sitemap_index
+from app.parsers import (
+    ExtractedArticle,
+    collect_extracted_articles_from_sitemap_index,
+    iter_extracted_article_batches_from_sitemap_index,
+)
 from app.repositories.article_type_repository import ArticleTypeRepository
 from app.repositories.news_repository import NewsRepository
 from app.repositories.source_repository import SourceRepository
@@ -46,6 +50,7 @@ class IngestionService:
         indexing_service: IndexingService | None = None,
         logging_service: LoggingService | None = None,
         sitemap_parser: Callable[..., list[ExtractedArticle]] | None = None,
+        sitemap_batch_parser: Callable[..., Iterable[list[ExtractedArticle]]] | None = None,
     ) -> None:
         # Зависимости можно передать снаружи для тестов, а в обычном запуске сервис сам создает рабочие репозитории.
         self.source_repository = (
@@ -68,6 +73,12 @@ class IngestionService:
             if sitemap_parser is not None
             else collect_extracted_articles_from_sitemap_index
         )
+        if sitemap_batch_parser is not None:
+            self.sitemap_batch_parser = sitemap_batch_parser
+        elif sitemap_parser is not None:
+            self.sitemap_batch_parser = self._build_batch_parser_from_legacy_parser(sitemap_parser)
+        else:
+            self.sitemap_batch_parser = iter_extracted_article_batches_from_sitemap_index
 
     def ingest_source_by_id(
         self,
@@ -75,6 +86,7 @@ class IngestionService:
         *,
         sitemap_limit: int = 5,
         max_articles: int = 10,
+        batch_size: int = 100,
     ) -> IngestionResult:
         """Собрать статьи из одного источника и сохранить новые записи в SQLite."""
         # Сервис принимает простой id, но дальше работает с полноценной ORM-сущностью источника.
@@ -86,6 +98,7 @@ class IngestionService:
             source,
             sitemap_limit=sitemap_limit,
             max_articles=max_articles,
+            batch_size=batch_size,
         )
 
     def ingest_active_sources(
@@ -93,6 +106,7 @@ class IngestionService:
         *,
         sitemap_limit: int = 5,
         max_articles_per_source: int = 10,
+        batch_size: int = 100,
     ) -> list[IngestionResult]:
         """Собрать статьи из всех активных источников."""
         results: list[IngestionResult] = []
@@ -104,6 +118,7 @@ class IngestionService:
                     source,
                     sitemap_limit=sitemap_limit,
                     max_articles=max_articles_per_source,
+                    batch_size=batch_size,
                 )
             )
 
@@ -115,40 +130,38 @@ class IngestionService:
         *,
         sitemap_limit: int = 5,
         max_articles: int = 10,
+        batch_size: int = 100,
     ) -> IngestionResult:
         """Выполнить полный сценарий ingestion для уже найденного источника."""
         if sitemap_limit <= 0:
             raise ValueError("sitemap_limit должен быть положительным числом")
         if max_articles <= 0:
             raise ValueError("max_articles должен быть положительным числом")
+        if batch_size <= 0:
+            raise ValueError("batch_size должен быть положительным числом")
 
         self.logging_service.log_source_event(source_id=source.id, event_code="ingestion_started")
         try:
-            # На этом шаге сервис вызывает parser-слой и получает структурированные модели, а не сырые словари.
-            extracted_articles = self.sitemap_parser(
+            result = IngestionResult(
+                source_id=source.id,
+                source_base_url=source.base_url,
+            )
+
+            # Parser теперь отдает готовые статьи частями, чтобы длинная загрузка не ждала финала всего обхода.
+            for extracted_articles in self.sitemap_batch_parser(
                 source.base_url,
                 sitemap_limit=sitemap_limit,
                 max_articles=max_articles,
                 stop_after_published_at=source.last_indexed_at,
-            )
-            result = IngestionResult(
-                source_id=source.id,
-                source_base_url=source.base_url,
-                found=len(extracted_articles),
-            )
+                batch_size=batch_size,
+            ):
+                result.found += len(extracted_articles)
+                saved_article_ids = self._save_extracted_article_batch(source, extracted_articles, result)
 
-            # Каждая статья проходит одинаковый путь: parser model -> DTO -> проверка правил -> repository -> SQLite.
-            saved_article_ids: list[int] = []
-            for extracted_article in extracted_articles:
-                parsed_article = self._to_parsed_article(source.base_url, extracted_article)
-                saved_article_id = self._save_parsed_article(source, parsed_article, result)
-                if saved_article_id is not None:
-                    saved_article_ids.append(saved_article_id)
-
-            if saved_article_ids:
-                # FAISS обновляем после успешных записей в SQLite, потому что article_id появляется только после insert.
-                append_result = self.indexing_service.append_articles_by_ids(saved_article_ids)
-                result.indexed = append_result.articles_count
+                if saved_article_ids:
+                    # FAISS обновляем после каждой успешной пачки SQLite-записей, чтобы поиск видел статьи постепенно.
+                    append_result = self.indexing_service.append_articles_by_ids(saved_article_ids)
+                    result.indexed += append_result.articles_count
 
             # Фиксируем время попытки ingestion для источника, чтобы потом можно было показывать его в UI.
             self.source_repository.update_last_indexed_at(source.id, datetime.now())
@@ -244,3 +257,35 @@ class IngestionService:
             return None
 
         return fallback_article_type.id
+
+    def _save_extracted_article_batch(
+        self,
+        source: Source,
+        extracted_articles: list[ExtractedArticle],
+        result: IngestionResult,
+    ) -> list[int]:
+        """Сохранить пачку parser-моделей в SQLite и вернуть id новых статей."""
+        saved_article_ids: list[int] = []
+
+        # Каждая статья проходит одинаковый путь: parser model -> DTO -> проверка правил -> repository -> SQLite.
+        for extracted_article in extracted_articles:
+            parsed_article = self._to_parsed_article(source.base_url, extracted_article)
+            saved_article_id = self._save_parsed_article(source, parsed_article, result)
+            if saved_article_id is not None:
+                saved_article_ids.append(saved_article_id)
+
+        return saved_article_ids
+
+    def _build_batch_parser_from_legacy_parser(
+        self,
+        sitemap_parser: Callable[..., list[ExtractedArticle]],
+    ) -> Callable[..., Iterable[list[ExtractedArticle]]]:
+        """Обернуть старый list-parser в batch-интерфейс для тестов и обратной совместимости."""
+
+        def batch_parser(*args, batch_size: int = 100, **kwargs) -> Iterable[list[ExtractedArticle]]:
+            """Разбить результат старого parser API на пачки фиксированного размера."""
+            extracted_articles = sitemap_parser(*args, **kwargs)
+            for start_index in range(0, len(extracted_articles), batch_size):
+                yield extracted_articles[start_index : start_index + batch_size]
+
+        return batch_parser

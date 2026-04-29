@@ -8,6 +8,7 @@ from .sitemap_parser import (
     collect_extracted_articles_from_sitemap_index,
     extract_article_references_from_sitemap,
     extract_sitemap_entries,
+    iter_extracted_article_batches_from_sitemap_index,
 )
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "extract_article",
     "extract_article_references_from_sitemap",
     "extract_sitemap_entries",
+    "iter_extracted_article_batches_from_sitemap_index",
 ]

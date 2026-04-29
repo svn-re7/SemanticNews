@@ -42,10 +42,38 @@ class IngestionServiceTest(unittest.TestCase):
         self.assertEqual(result.saved, 2)
         self.assertEqual(result.indexed, 2)
         self.assertEqual(indexing_service.appended_article_ids, [101, 102])
+        self.assertEqual(indexing_service.append_calls, [[101, 102]])
         self.assertEqual(
             logging_service.source_events,
             [(5, "ingestion_started"), (5, "ingestion_finished")],
         )
+
+    def test_ingest_source_indexes_articles_by_batches(self) -> None:
+        """Большая загрузка сохраняет и индексирует статьи пачками, а не одним финальным блоком."""
+        indexing_service = FakeIndexingService()
+        source = Source(
+            source_type_id=1,
+            base_url="https://example.test/sitemap.xml",
+            name="Тестовый источник",
+            is_active=True,
+        )
+        source.id = 5
+
+        service = IngestionService(
+            source_repository=FakeSourceRepository(source),
+            news_repository=FakeNewsRepository(created_ids=[101, 102, 103]),
+            article_type_repository=FakeArticleTypeRepository(),
+            indexing_service=indexing_service,
+            logging_service=FakeLoggingService(),
+            sitemap_batch_parser=fake_sitemap_batch_parser,
+        )
+
+        result = service.ingest_source(source, sitemap_limit=1, max_articles=3, batch_size=2)
+
+        self.assertEqual(result.found, 3)
+        self.assertEqual(result.saved, 3)
+        self.assertEqual(result.indexed, 3)
+        self.assertEqual(indexing_service.append_calls, [[101, 102], [103]])
 
     def test_ingest_source_logs_failed_event_when_parser_fails(self) -> None:
         """Если parser падает, ingestion пишет событие ingestion_failed и пробрасывает ошибку."""
@@ -130,10 +158,12 @@ class FakeIndexingService:
 
     def __init__(self) -> None:
         self.appended_article_ids: list[int] = []
+        self.append_calls: list[list[int]] = []
 
     def append_articles_by_ids(self, article_ids: list[int]):
         """Запомнить id статей, которые ingestion отправил в FAISS."""
         self.appended_article_ids = article_ids
+        self.append_calls.append(article_ids)
         return FakeIndexAppendResult(articles_count=len(article_ids))
 
 
@@ -171,6 +201,32 @@ def fake_sitemap_parser(*args, **kwargs) -> list[ExtractedArticle]:
             text="Текст второй статьи",
             published_at=datetime(2026, 1, 2),
         ),
+    ]
+
+
+def fake_sitemap_batch_parser(*args, **kwargs):
+    """Вернуть тестовые статьи двумя пачками без сетевых запросов."""
+    yield [
+        ExtractedArticle(
+            url="https://example.test/1",
+            title="Первая статья",
+            text="Текст первой статьи",
+            published_at=datetime(2026, 1, 1),
+        ),
+        ExtractedArticle(
+            url="https://example.test/2",
+            title="Вторая статья",
+            text="Текст второй статьи",
+            published_at=datetime(2026, 1, 2),
+        ),
+    ]
+    yield [
+        ExtractedArticle(
+            url="https://example.test/3",
+            title="Третья статья",
+            text="Текст третьей статьи",
+            published_at=datetime(2026, 1, 3),
+        )
     ]
 
 
