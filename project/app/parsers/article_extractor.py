@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 from htmldate import find_date
@@ -83,8 +84,65 @@ def _extract_title_from_html(soup: BeautifulSoup, article_url: str) -> str | Non
 
 def _extract_text_from_html(html: str, soup: BeautifulSoup, article_url: str) -> str:
     """Извлечь основной текст статьи с каскадом общих и source-specific стратегий."""
-    # Для основного текста используем только trafilatura как основной извлекатель.
+    # Для известных источников сначала берем точный контейнер статьи.
+    # Это уменьшает риск захватить меню, похожие материалы или продублированные блоки страницы.
+    source_specific_text = _extract_text_with_source_specific_rules(soup, article_url)
+    if source_specific_text:
+        return source_specific_text
+
+    # Если специальных правил нет или разметка изменилась, оставляем общий fallback через trafilatura.
     return _extract_text_with_trafilatura(html, article_url)
+
+
+def _extract_text_with_source_specific_rules(soup: BeautifulSoup, article_url: str) -> str:
+    """Извлечь текст по точным CSS-правилам для поддержанных новостных источников."""
+    host = urlparse(article_url).netloc.lower()
+
+    if host.endswith("kommersant.ru"):
+        # У Коммерсанта полный текст лежит в общем wrapper, а отдельные абзацы размечены doc__text.
+        return _extract_text_from_first_matching_selector(
+            soup,
+            [
+                ".article_text_wrapper",
+                ".doc__text",
+            ],
+        )
+
+    if host.endswith("iz.ru"):
+        # У Известий основное тело статьи размечено как articleBody.
+        text = _extract_text_from_first_matching_selector(
+            soup,
+            [
+                '[itemprop="articleBody"]',
+                ".text-article",
+                "article",
+            ],
+        )
+        return _remove_known_text_prefix(text, "Выделить главное Вкл Выкл")
+
+    return ""
+
+
+def _extract_text_from_first_matching_selector(soup: BeautifulSoup, selectors: list[str]) -> str:
+    """Вернуть нормализованный текст первого непустого CSS-селектора."""
+    for selector in selectors:
+        node = soup.select_one(selector)
+        if node is None:
+            continue
+
+        text = normalize_whitespace(node.get_text(" ", strip=True))
+        if text:
+            return text
+
+    return ""
+
+
+def _remove_known_text_prefix(text: str, prefix: str) -> str:
+    """Убрать известный служебный префикс из текста статьи."""
+    if text.startswith(prefix):
+        return text.removeprefix(prefix).strip()
+
+    return text
 
 
 def _extract_text_with_trafilatura(html: str, article_url: str) -> str:

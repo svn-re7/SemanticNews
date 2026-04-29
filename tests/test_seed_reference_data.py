@@ -2,14 +2,22 @@ from __future__ import annotations
 
 import sys
 import unittest
+from dataclasses import dataclass
 from pathlib import Path
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1] / "project"
+ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_DIR))
+sys.path.insert(0, str(ROOT_DIR))
 
 from app.models.dto import ReferenceValueCreateDTO, ReferenceValueUpdateDTO  # noqa: E402
-from scripts.seed_reference_data import EVENT_TYPES, _seed_reference_values  # noqa: E402
+from scripts.seed_reference_data import (  # noqa: E402
+    EVENT_TYPES,
+    STARTER_SOURCES,
+    _seed_default_sources,
+    _seed_reference_values,
+)
 
 
 class SeedReferenceDataTest(unittest.TestCase):
@@ -50,6 +58,20 @@ class SeedReferenceDataTest(unittest.TestCase):
         self.assertEqual(ids_by_code["ingestion_started"], 42)
         self.assertEqual(repository.updated_values[0].value_id, 42)
 
+    def test_seed_default_sources_creates_all_starter_news_sources(self) -> None:
+        """Seed добавляет все стартовые новостные источники и сохраняет их активными."""
+        repository = FakeSourceRepository()
+
+        source_ids = _seed_default_sources(
+            source_repository=repository,
+            source_type_id=7,
+        )
+
+        self.assertEqual(set(source_ids), {source.url for source in STARTER_SOURCES})
+        self.assertIn("https://www.kommersant.ru/sitemaps/news.xml", source_ids)
+        self.assertIn("https://iz.ru/sitemap.xml", source_ids)
+        self.assertTrue(all(source.is_active for source in repository.sources.values()))
+
 
 class FakeReferenceValue:
     """Минимальная подмена ORM-значения справочника."""
@@ -81,6 +103,49 @@ class FakeReferenceRepository:
         """Запомнить обновление человекочитаемых полей справочника."""
         self.updated_values.append(update_data)
         return True
+
+
+@dataclass
+class FakeSource:
+    """Минимальная модель источника для проверки seed без настоящей SQLite."""
+
+    id: int
+    base_url: str
+    name: str
+    is_active: bool
+
+
+class FakeSourceRepository:
+    """Подменный репозиторий источников для unit-теста seed-логики."""
+
+    def __init__(self) -> None:
+        self.sources: dict[str, FakeSource] = {}
+        self.next_id = 1
+
+    def get_by_base_url(self, base_url: str) -> FakeSource | None:
+        """Вернуть источник из памяти по URL."""
+        return self.sources.get(base_url)
+
+    def create(self, source_data) -> int:
+        """Создать источник в памяти и вернуть его id."""
+        source_id = self.next_id
+        self.next_id += 1
+        self.sources[source_data.base_url] = FakeSource(
+            id=source_id,
+            base_url=source_data.base_url,
+            name=source_data.name,
+            is_active=source_data.is_active,
+        )
+        return source_id
+
+    def update_seed_data(self, update_data) -> bool:
+        """Обновить источник в памяти, имитируя реальный репозиторий."""
+        for source in self.sources.values():
+            if source.id == update_data.source_id:
+                source.name = update_data.name
+                source.is_active = update_data.is_active
+                return True
+        return False
 
 
 if __name__ == "__main__":

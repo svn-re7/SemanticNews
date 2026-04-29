@@ -31,6 +31,14 @@ class ReferenceSeedItem:
     description: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class StarterSourceSeedItem:
+    """Один стартовый новостной источник для первичного наполнения приложения."""
+
+    url: str
+    name: str
+
+
 SOURCE_TYPES = [
     ReferenceSeedItem(
         code="news_media",
@@ -130,8 +138,20 @@ EVENT_TYPES = [
     ),
 ]
 
-DEFAULT_SOURCE_URL = "https://ria.ru/sitemap_article_index.xml"
-DEFAULT_SOURCE_NAME = "РИА Новости"
+STARTER_SOURCES = [
+    StarterSourceSeedItem(
+        url="https://ria.ru/sitemap_article_index.xml",
+        name="РИА Новости",
+    ),
+    StarterSourceSeedItem(
+        url="https://www.kommersant.ru/sitemaps/news.xml",
+        name="Коммерсантъ",
+    ),
+    StarterSourceSeedItem(
+        url="https://iz.ru/sitemap.xml",
+        name="Известия",
+    ),
+]
 
 
 def main() -> int:
@@ -148,8 +168,8 @@ def main() -> int:
     article_type_ids = _seed_reference_values(article_type_repository, ARTICLE_TYPES)
     event_type_ids = _seed_reference_values(event_type_repository, EVENT_TYPES)
 
-    # Стартовый источник использует тип news_media, потому что РИА является новостным медиа.
-    source_id = _seed_default_source(
+    # Стартовые источники используют тип news_media, потому что это обычные новостные сайты.
+    source_ids = _seed_default_sources(
         source_repository=source_repository,
         source_type_id=source_type_ids["news_media"],
     )
@@ -158,7 +178,7 @@ def main() -> int:
     print(f"Типы источников: {source_type_ids}")
     print(f"Типы материалов: {article_type_ids}")
     print(f"Типы событий: {event_type_ids}")
-    print(f"Стартовый источник: id={source_id}, url={DEFAULT_SOURCE_URL}")
+    print(f"Стартовые источники: {source_ids}")
     return 0
 
 
@@ -198,31 +218,43 @@ def _update_reference_value(repository, value_id: int, item: ReferenceSeedItem) 
     )
 
 
-def _seed_default_source(
+def _seed_default_sources(
     *,
     source_repository: SourceRepository,
     source_type_id: int,
-) -> int:
-    """Создать стартовый источник РИА, если он еще не добавлен в БД."""
-    existing_source = source_repository.get_by_base_url(DEFAULT_SOURCE_URL)
-    if existing_source is not None:
-        _update_default_source(source_repository, existing_source.id, source_type_id)
-        return existing_source.id
+) -> dict[str, int]:
+    """Создать стартовые источники новостей, если они еще не добавлены в БД."""
+    ids_by_url: dict[str, int] = {}
 
-    return source_repository.create(
-        SourceCreateDTO(
-            source_type_id=source_type_id,
-            base_url=DEFAULT_SOURCE_URL,
-            name=DEFAULT_SOURCE_NAME,
-            is_active=True,
+    for source in STARTER_SOURCES:
+        existing_source = source_repository.get_by_base_url(source.url)
+        if existing_source is not None:
+            _update_default_source(
+                source_repository,
+                existing_source.id,
+                source_type_id,
+                source.name,
+            )
+            ids_by_url[source.url] = existing_source.id
+            continue
+
+        ids_by_url[source.url] = source_repository.create(
+            SourceCreateDTO(
+                source_type_id=source_type_id,
+                base_url=source.url,
+                name=source.name,
+                is_active=True,
+            )
         )
-    )
+
+    return ids_by_url
 
 
 def _update_default_source(
     source_repository: SourceRepository,
     source_id: int,
     source_type_id: int,
+    source_name: str,
 ) -> None:
     """Обновить стартовый источник, если он уже существовал до запуска seed."""
     # Источник тоже выравниваем, чтобы повторный запуск seed исправлял имя и активность записи.
@@ -230,7 +262,7 @@ def _update_default_source(
         SourceSeedUpdateDTO(
             source_id=source_id,
             source_type_id=source_type_id,
-            name=DEFAULT_SOURCE_NAME,
+            name=source_name,
             is_active=True,
         )
     )
