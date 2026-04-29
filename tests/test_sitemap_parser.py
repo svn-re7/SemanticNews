@@ -11,10 +11,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1] / "project"
 sys.path.insert(0, str(PROJECT_DIR))
 
 from app.parsers.parser_models import ArticleReference, ExtractedArticle, SitemapEntry  # noqa: E402
-from app.parsers.sitemap_parser import (  # noqa: E402
-    collect_extracted_articles_from_sitemap_index,
-    iter_extracted_article_batches_from_sitemap_index,
-)
+from app.parsers.sitemap_parser import iter_extracted_article_batches_from_sitemap_index  # noqa: E402
 
 
 class SitemapParserTest(unittest.TestCase):
@@ -35,12 +32,15 @@ class SitemapParserTest(unittest.TestCase):
             patch("app.parsers.sitemap_parser.collect_article_references", return_value=references),
             patch("app.parsers.sitemap_parser.extract_article", side_effect=fake_extract_article) as extract_mock,
         ):
-            articles = collect_extracted_articles_from_sitemap_index(
-                "https://example.test/sitemap-index.xml",
-                stop_after_published_at=datetime(2026, 1, 2),
-                stop_after_old_articles=2,
+            batches = list(
+                iter_extracted_article_batches_from_sitemap_index(
+                    "https://example.test/sitemap-index.xml",
+                    stop_after_published_at=datetime(2026, 1, 2),
+                    stop_after_old_articles=2,
+                )
             )
 
+        articles = [article for batch in batches for article in batch]
         self.assertEqual([article.url for article in articles], ["https://example.test/new"])
         self.assertEqual(extract_mock.call_count, 1)
 

@@ -93,31 +93,6 @@ def collect_article_references(
         return article_references[:max_articles]
 
 
-def collect_extracted_articles_from_sitemap_index(
-    sitemap_index_url: str,
-    *,
-    sitemap_limit: int = 5,
-    max_articles: int = 10,
-    stop_after_published_at: datetime | None = None,
-    stop_after_old_articles: int = 3,
-    session: Session | None = None,
-) -> list[ExtractedArticle]:
-    """Собрать статьи, начиная с sitemap-индекса и заканчивая извлечением HTML-контента."""
-    extracted_articles: list[ExtractedArticle] = []
-    for article_batch in iter_extracted_article_batches_from_sitemap_index(
-        sitemap_index_url,
-        sitemap_limit=sitemap_limit,
-        max_articles=max_articles,
-        stop_after_published_at=stop_after_published_at,
-        stop_after_old_articles=stop_after_old_articles,
-        batch_size=max_articles,
-        session=session,
-    ):
-        extracted_articles.extend(article_batch)
-
-    return extracted_articles
-
-
 def iter_extracted_article_batches_from_sitemap_index(
     sitemap_index_url: str,
     *,

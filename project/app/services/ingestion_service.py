@@ -11,7 +11,6 @@ from app.models.dto import ArticleCreateDTO, ParsedArticleDTO
 from app.models.entities import Source
 from app.parsers import (
     ExtractedArticle,
-    collect_extracted_articles_from_sitemap_index,
     iter_extracted_article_batches_from_sitemap_index,
 )
 from app.repositories.article_type_repository import ArticleTypeRepository
@@ -49,7 +48,6 @@ class IngestionService:
         article_type_repository: ArticleTypeRepository | None = None,
         indexing_service: IndexingService | None = None,
         logging_service: LoggingService | None = None,
-        sitemap_parser: Callable[..., list[ExtractedArticle]] | None = None,
         sitemap_batch_parser: Callable[..., Iterable[list[ExtractedArticle]]] | None = None,
     ) -> None:
         # Зависимости можно передать снаружи для тестов, а в обычном запуске сервис сам создает рабочие репозитории.
@@ -67,18 +65,12 @@ class IngestionService:
             indexing_service if indexing_service is not None else IndexingService()
         )
         self.logging_service = logging_service if logging_service is not None else LoggingService()
-        # Парсер тоже оставлен заменяемым, чтобы проверить ingestion без реальных HTTP-запросов к сайтам.
-        self.sitemap_parser = (
-            sitemap_parser
-            if sitemap_parser is not None
-            else collect_extracted_articles_from_sitemap_index
+        # Parser заменяемый для тестов, но контракт теперь один: статьи приходят пачками.
+        self.sitemap_batch_parser = (
+            sitemap_batch_parser
+            if sitemap_batch_parser is not None
+            else iter_extracted_article_batches_from_sitemap_index
         )
-        if sitemap_batch_parser is not None:
-            self.sitemap_batch_parser = sitemap_batch_parser
-        elif sitemap_parser is not None:
-            self.sitemap_batch_parser = self._build_batch_parser_from_legacy_parser(sitemap_parser)
-        else:
-            self.sitemap_batch_parser = iter_extracted_article_batches_from_sitemap_index
 
     def ingest_source_by_id(
         self,
@@ -275,17 +267,3 @@ class IngestionService:
                 saved_article_ids.append(saved_article_id)
 
         return saved_article_ids
-
-    def _build_batch_parser_from_legacy_parser(
-        self,
-        sitemap_parser: Callable[..., list[ExtractedArticle]],
-    ) -> Callable[..., Iterable[list[ExtractedArticle]]]:
-        """Обернуть старый list-parser в batch-интерфейс для тестов и обратной совместимости."""
-
-        def batch_parser(*args, batch_size: int = 100, **kwargs) -> Iterable[list[ExtractedArticle]]:
-            """Разбить результат старого parser API на пачки фиксированного размера."""
-            extracted_articles = sitemap_parser(*args, **kwargs)
-            for start_index in range(0, len(extracted_articles), batch_size):
-                yield extracted_articles[start_index : start_index + batch_size]
-
-        return batch_parser

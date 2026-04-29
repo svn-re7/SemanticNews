@@ -34,7 +34,7 @@ class IngestionServiceTest(unittest.TestCase):
             article_type_repository=FakeArticleTypeRepository(),
             indexing_service=indexing_service,
             logging_service=logging_service,
-            sitemap_parser=fake_sitemap_parser,
+            sitemap_batch_parser=fake_sitemap_batch_parser,
         )
 
         result = service.ingest_source(source, sitemap_limit=1, max_articles=2)
@@ -92,7 +92,7 @@ class IngestionServiceTest(unittest.TestCase):
             article_type_repository=FakeArticleTypeRepository(),
             indexing_service=FakeIndexingService(),
             logging_service=logging_service,
-            sitemap_parser=failing_sitemap_parser,
+            sitemap_batch_parser=failing_sitemap_batch_parser,
         )
 
         with self.assertRaises(RuntimeError):
@@ -186,27 +186,10 @@ class FakeLoggingService:
         return len(self.source_events)
 
 
-def fake_sitemap_parser(*args, **kwargs) -> list[ExtractedArticle]:
-    """Вернуть две тестовые статьи без сетевых запросов."""
-    return [
-        ExtractedArticle(
-            url="https://example.test/1",
-            title="Первая статья",
-            text="Текст первой статьи",
-            published_at=datetime(2026, 1, 1),
-        ),
-        ExtractedArticle(
-            url="https://example.test/2",
-            title="Вторая статья",
-            text="Текст второй статьи",
-            published_at=datetime(2026, 1, 2),
-        ),
-    ]
-
-
 def fake_sitemap_batch_parser(*args, **kwargs):
     """Вернуть тестовые статьи двумя пачками без сетевых запросов."""
-    yield [
+    max_articles = kwargs.get("max_articles", 3)
+    articles = [
         ExtractedArticle(
             url="https://example.test/1",
             title="Первая статья",
@@ -219,18 +202,21 @@ def fake_sitemap_batch_parser(*args, **kwargs):
             text="Текст второй статьи",
             published_at=datetime(2026, 1, 2),
         ),
-    ]
-    yield [
         ExtractedArticle(
             url="https://example.test/3",
             title="Третья статья",
             text="Текст третьей статьи",
             published_at=datetime(2026, 1, 3),
-        )
+        ),
     ]
 
+    selected_articles = articles[:max_articles]
+    yield selected_articles[:2]
+    if len(selected_articles) > 2:
+        yield selected_articles[2:]
 
-def failing_sitemap_parser(*args, **kwargs) -> list[ExtractedArticle]:
+
+def failing_sitemap_batch_parser(*args, **kwargs):
     """Имитировать ошибку parser-слоя."""
     raise RuntimeError("parser failed")
 
