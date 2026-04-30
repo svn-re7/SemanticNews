@@ -320,7 +320,7 @@ class IngestionService:
         if article_request_delay_seconds < 0:
             raise ValueError("article_request_delay_seconds не может быть отрицательным")
 
-        self.logging_service.log_source_event(source_id=source.id, event_code="ingestion_started")
+        self._log_source_event(source.id, "ingestion_started")
         try:
             result = IngestionResult(
                 source_id=source.id,
@@ -359,9 +359,10 @@ class IngestionService:
                 logger.info("Ingestion source_id=%s остановлен пользователем после текущей пачки.", source.id)
                 return result
 
-            # Фиксируем время попытки ingestion для источника, чтобы потом можно было показывать его в UI.
-            self.source_repository.update_last_indexed_at(source.id, datetime.now())
-            self.logging_service.log_source_event(source_id=source.id, event_code="ingestion_finished")
+            with self.write_lock:
+                # Фиксируем время попытки ingestion для источника, чтобы потом можно было показывать его в UI.
+                self.source_repository.update_last_indexed_at(source.id, datetime.now())
+                self.logging_service.log_source_event(source_id=source.id, event_code="ingestion_finished")
             logger.info(
                 "Ingestion source_id=%s: найдено=%s, сохранено=%s, проиндексировано=%s, дубли=%s, без текста=%s",
                 result.source_id,
@@ -373,7 +374,7 @@ class IngestionService:
             )
             return result
         except Exception:
-            self.logging_service.log_source_event(source_id=source.id, event_code="ingestion_failed")
+            self._log_source_event(source.id, "ingestion_failed")
             raise
 
     def _to_parsed_article(
@@ -504,3 +505,8 @@ class IngestionService:
 
         self.source_repository.update_last_indexed_at(source.id, batch_checkpoint)
         source.last_indexed_at = batch_checkpoint
+
+    def _log_source_event(self, source_id: int, event_code: str) -> None:
+        """Записать SourceLog под общим ingestion-lock, чтобы потоки не писали в SQLite одновременно."""
+        with self.write_lock:
+            self.logging_service.log_source_event(source_id=source_id, event_code=event_code)

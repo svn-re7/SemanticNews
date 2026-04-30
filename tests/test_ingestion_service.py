@@ -247,8 +247,8 @@ class IngestionServiceTest(unittest.TestCase):
         self.assertEqual([result.source_id for result in results], [5, 6])
         self.assertEqual([result.saved for result in results], [1, 1])
 
-    def test_ingest_source_uses_write_lock_for_batch_save_and_index(self) -> None:
-        """Запись пачек в SQLite и FAISS идет через общий lock, чтобы потоки не писали одновременно."""
+    def test_ingest_source_uses_write_lock_for_ingestion_writes(self) -> None:
+        """Запись логов, статей, FAISS и checkpoint идет через общий lock."""
         write_lock = FakeWriteLock()
 
         service = IngestionService(
@@ -263,7 +263,7 @@ class IngestionServiceTest(unittest.TestCase):
 
         service.ingest_source(service.source_repository.source, max_articles=3, batch_size=2)
 
-        self.assertEqual(write_lock.enter_count, 2)
+        self.assertEqual(write_lock.enter_count, 4)
 
 
 class FakeSourceRepository:
