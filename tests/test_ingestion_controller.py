@@ -77,6 +77,46 @@ class IngestionControllerTest(unittest.TestCase):
         self.assertEqual(payload["results"][0]["saved"], 2)
         self.assertIn("skipped_low_quality_text", payload["results"][0])
 
+    def test_auto_ingestion_starts_background_task_when_sources_need_refresh(self) -> None:
+        """Автостарт запускает фоновую задачу, если сервис видит устаревшие источники."""
+        original_service = ingestion_controller.IngestionService
+        original_thread = ingestion_controller.Thread
+
+        try:
+            ingestion_controller.IngestionService = FakeAutoStartIngestionService
+            ingestion_controller.Thread = FakeThread
+            FakeAutoStartIngestionService.should_run = True
+            FakeThread.was_started = False
+
+            started = ingestion_controller.start_auto_ingestion_if_needed()
+            payload = ingestion_controller._serialize_state()
+        finally:
+            ingestion_controller.IngestionService = original_service
+            ingestion_controller.Thread = original_thread
+            reset_ingestion_state()
+
+        self.assertTrue(started)
+        self.assertTrue(FakeThread.was_started)
+        self.assertTrue(payload["is_running"])
+        self.assertIn("Автообновление", payload["message"])
+
+    def test_auto_ingestion_does_not_start_when_sources_are_fresh(self) -> None:
+        """Автостарт не запускает задачу, если свежие данные уже есть."""
+        original_service = ingestion_controller.IngestionService
+
+        try:
+            ingestion_controller.IngestionService = FakeAutoStartIngestionService
+            FakeAutoStartIngestionService.should_run = False
+
+            started = ingestion_controller.start_auto_ingestion_if_needed()
+            payload = ingestion_controller._serialize_state()
+        finally:
+            ingestion_controller.IngestionService = original_service
+            reset_ingestion_state()
+
+        self.assertFalse(started)
+        self.assertFalse(payload["is_running"])
+
 
 class FakeScheduledIngestionService:
     """Подменный ingestion-сервис для проверки контроллера без реального парсинга."""
@@ -103,6 +143,30 @@ class FakeScheduledIngestionService:
                 )
             ],
         )
+
+
+class FakeAutoStartIngestionService:
+    """Подменный ingestion-сервис для проверки решения об автостарте."""
+
+    should_run = False
+
+    def should_run_auto_ingestion(self) -> bool:
+        """Вернуть заранее заданное решение об автообновлении."""
+        return type(self).should_run
+
+
+class FakeThread:
+    """Подменный поток, который не запускает реальную фоновую задачу."""
+
+    was_started = False
+
+    def __init__(self, *, target, daemon: bool) -> None:
+        self.target = target
+        self.daemon = daemon
+
+    def start(self) -> None:
+        """Зафиксировать запуск без выполнения target."""
+        type(self).was_started = True
 
 
 def reset_ingestion_state() -> None:

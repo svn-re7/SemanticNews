@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 
@@ -223,6 +223,46 @@ class IngestionServiceTest(unittest.TestCase):
         self.assertEqual(parser_kwargs["max_articles"], 5000)
         self.assertEqual(parser_kwargs["batch_size"], 100)
         self.assertEqual(parser_kwargs["stop_after_published_at"], source.last_indexed_at)
+
+    def test_should_run_auto_ingestion_when_database_is_small(self) -> None:
+        """Автообновление нужно запускать, если первичный корпус еще не набран."""
+        source = build_fake_source()
+        service = IngestionService(
+            source_repository=FakeSourceRepository(source),
+            news_repository=FakeNewsRepository(created_ids=[], articles_count=250),
+        )
+
+        should_run = service.should_run_auto_ingestion()
+
+        self.assertTrue(should_run)
+
+    def test_should_run_auto_ingestion_when_active_source_is_stale(self) -> None:
+        """Автообновление нужно запускать, если активный источник проверялся больше часа назад."""
+        source = build_fake_source()
+        now = datetime(2026, 4, 30, 12, 0, 0)
+        source.last_indexed_at = now - timedelta(hours=2)
+        service = IngestionService(
+            source_repository=FakeSourceRepository(source),
+            news_repository=FakeNewsRepository(created_ids=[], articles_count=1000),
+        )
+
+        should_run = service.should_run_auto_ingestion(now_provider=lambda: now)
+
+        self.assertTrue(should_run)
+
+    def test_should_not_run_auto_ingestion_when_sources_are_fresh(self) -> None:
+        """Автообновление не нужно запускать, если корпус набран и активные источники свежие."""
+        source = build_fake_source()
+        now = datetime(2026, 4, 30, 12, 0, 0)
+        source.last_indexed_at = now - timedelta(minutes=30)
+        service = IngestionService(
+            source_repository=FakeSourceRepository(source),
+            news_repository=FakeNewsRepository(created_ids=[], articles_count=1000),
+        )
+
+        should_run = service.should_run_auto_ingestion(now_provider=lambda: now)
+
+        self.assertFalse(should_run)
 
     def test_ingest_active_sources_accepts_parallel_workers_and_keeps_source_order(self) -> None:
         """Параллельный сбор активных источников возвращает результаты в порядке списка источников."""

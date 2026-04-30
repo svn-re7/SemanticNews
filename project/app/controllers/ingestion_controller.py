@@ -42,29 +42,43 @@ def ingestion_page():
 @ingestion_bp.post("/start")
 def start_ingestion():
     """Запустить ingestion в фоне и сразу вернуть управление UI."""
+    started = _start_background_ingestion("Сбор новостей запущен.")
+    if not started:
+        return jsonify(_serialize_state(started=False))
+
+    return jsonify(_serialize_state(started=True)), 202
+
+
+def start_auto_ingestion_if_needed() -> bool:
+    """Запустить автоматический ingestion при старте приложения, если данные устарели."""
+    service = IngestionService()
+    if not service.should_run_auto_ingestion():
+        return False
+
+    return _start_background_ingestion("Автообновление новостей запущено.")
+
+
+def _start_background_ingestion(start_message: str) -> bool:
+    """Запустить общий фоновый ingestion, если другая задача еще не выполняется."""
     with _task_lock:
         if _task_state.is_running:
-            should_start = False
-        else:
-            should_start = True
-            _task_state.is_running = True
-            _task_state.started_at = datetime.now()
-            _task_state.finished_at = None
-            _task_state.message = "Сбор новостей запущен."
-            _task_state.results = []
-            _task_state.error = None
-            _task_state.mode = None
-            _task_state.article_count_before = None
-            _task_state.should_stop = False
-            _task_state.stopped = False
+            return False
 
-    if not should_start:
-        return jsonify(_serialize_state(started=False))
+        _task_state.is_running = True
+        _task_state.started_at = datetime.now()
+        _task_state.finished_at = None
+        _task_state.message = start_message
+        _task_state.results = []
+        _task_state.error = None
+        _task_state.mode = None
+        _task_state.article_count_before = None
+        _task_state.should_stop = False
+        _task_state.stopped = False
 
     # Сбор и построение embeddings могут занять время, поэтому не блокируем HTTP-запрос.
     thread = Thread(target=_run_ingestion_task, daemon=True)
     thread.start()
-    return jsonify(_serialize_state(started=True)), 202
+    return True
 
 
 @ingestion_bp.post("/stop")

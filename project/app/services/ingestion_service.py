@@ -5,7 +5,7 @@ from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from threading import Lock
 
 from sqlalchemy.exc import IntegrityError
@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 MIN_ARTICLE_TEXT_LENGTH = 300
+AUTO_INGESTION_REFRESH_INTERVAL = timedelta(hours=1)
 
 
 @dataclass(slots=True)
@@ -150,6 +151,33 @@ class IngestionService:
             results=results,
             stopped=stopped,
         )
+
+    def should_run_auto_ingestion(
+        self,
+        *,
+        initial_article_threshold: int = 1000,
+        refresh_interval: timedelta = AUTO_INGESTION_REFRESH_INTERVAL,
+        now_provider: Callable[[], datetime] | None = None,
+    ) -> bool:
+        """Проверить, нужно ли запускать автоматический сбор при старте приложения."""
+        if initial_article_threshold < 0:
+            raise ValueError("initial_article_threshold не может быть отрицательным")
+        if refresh_interval.total_seconds() <= 0:
+            raise ValueError("refresh_interval должен быть положительным")
+
+        # Если стартовый корпус еще маленький, запускаем initial-режим без проверки дат источников.
+        if self.news_repository.count_articles() < initial_article_threshold:
+            return True
+
+        now = now_provider() if now_provider is not None else datetime.now()
+        active_sources = self.source_repository.list_sources(only_active=True)
+        for source in active_sources:
+            if source.last_indexed_at is None:
+                return True
+            if now - source.last_indexed_at >= refresh_interval:
+                return True
+
+        return False
 
     def ingest_source_by_id(
         self,
