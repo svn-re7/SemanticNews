@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime
+from threading import Lock
 
 from sqlalchemy.exc import IntegrityError
 
@@ -64,6 +67,7 @@ class IngestionService:
         indexing_service: IndexingService | None = None,
         logging_service: LoggingService | None = None,
         sitemap_batch_parser: Callable[..., Iterable[list[ExtractedArticle]]] | None = None,
+        write_lock: AbstractContextManager | None = None,
     ) -> None:
         # Зависимости можно передать снаружи для тестов, а в обычном запуске сервис сам создает рабочие репозитории.
         self.source_repository = (
@@ -86,6 +90,8 @@ class IngestionService:
             if sitemap_batch_parser is not None
             else iter_extracted_article_batches_from_sitemap_index
         )
+        # SQLite и FAISS/id_map остаются общими runtime-ресурсами, поэтому запись пачки сериализуем.
+        self.write_lock = write_lock if write_lock is not None else Lock()
 
     def run_scheduled_ingestion(
         self,
@@ -97,6 +103,7 @@ class IngestionService:
         incremental_sitemap_limit: int = 5,
         batch_size: int = 100,
         article_request_delay_seconds: float = 0.5,
+        max_workers: int = 1,
         should_stop: Callable[[], bool] | None = None,
     ) -> ScheduledIngestionResult:
         """Запустить плановый сбор и выбрать initial или incremental режим по размеру БД."""
@@ -117,6 +124,7 @@ class IngestionService:
                 batch_size=batch_size,
                 article_request_delay_seconds=article_request_delay_seconds,
                 ignore_last_indexed_at=True,
+                max_workers=max_workers,
                 should_stop=should_stop,
             )
         else:
@@ -128,6 +136,7 @@ class IngestionService:
                 max_articles_per_source=incremental_safety_max_articles_per_source,
                 batch_size=batch_size,
                 article_request_delay_seconds=article_request_delay_seconds,
+                max_workers=max_workers,
                 should_stop=should_stop,
             )
 
@@ -177,13 +186,51 @@ class IngestionService:
         batch_size: int = 100,
         article_request_delay_seconds: float = 0.5,
         ignore_last_indexed_at: bool = False,
+        max_workers: int = 1,
         should_stop: Callable[[], bool] | None = None,
     ) -> list[IngestionResult]:
         """Собрать статьи из всех активных источников."""
-        results: list[IngestionResult] = []
+        if max_workers <= 0:
+            raise ValueError("max_workers должен быть положительным числом")
 
         # Репозиторий отвечает только за выборку активных источников, а сам сценарий сбора остается в сервисе.
-        for source in self.source_repository.list_sources(only_active=True):
+        sources = self.source_repository.list_sources(only_active=True)
+        if max_workers == 1 or len(sources) <= 1:
+            return self._ingest_active_sources_sequentially(
+                sources,
+                sitemap_limit=sitemap_limit,
+                max_articles_per_source=max_articles_per_source,
+                batch_size=batch_size,
+                article_request_delay_seconds=article_request_delay_seconds,
+                ignore_last_indexed_at=ignore_last_indexed_at,
+                should_stop=should_stop,
+            )
+
+        return self._ingest_active_sources_in_parallel(
+            sources,
+            sitemap_limit=sitemap_limit,
+            max_articles_per_source=max_articles_per_source,
+            batch_size=batch_size,
+            article_request_delay_seconds=article_request_delay_seconds,
+            ignore_last_indexed_at=ignore_last_indexed_at,
+            max_workers=max_workers,
+            should_stop=should_stop,
+        )
+
+    def _ingest_active_sources_sequentially(
+        self,
+        sources: list[Source],
+        *,
+        sitemap_limit: int,
+        max_articles_per_source: int,
+        batch_size: int,
+        article_request_delay_seconds: float,
+        ignore_last_indexed_at: bool,
+        should_stop: Callable[[], bool] | None,
+    ) -> list[IngestionResult]:
+        """Собрать источники по старому последовательному сценарию."""
+        results: list[IngestionResult] = []
+        for source in sources:
             if should_stop is not None and should_stop():
                 break
 
@@ -202,6 +249,55 @@ class IngestionService:
                 break
 
         return results
+
+    def _ingest_active_sources_in_parallel(
+        self,
+        sources: list[Source],
+        *,
+        sitemap_limit: int,
+        max_articles_per_source: int,
+        batch_size: int,
+        article_request_delay_seconds: float,
+        ignore_last_indexed_at: bool,
+        max_workers: int,
+        should_stop: Callable[[], bool] | None,
+    ) -> list[IngestionResult]:
+        """Собрать разные источники параллельно, сохранив порядок результатов как в списке источников."""
+        ordered_results: list[IngestionResult | None] = [None] * len(sources)
+        futures_by_index: dict[Future[IngestionResult], int] = {}
+
+        # Потоки ускоряют сетевой parser-участок. Запись пачек внутри ingest_source защищена write_lock.
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for source_index, source in enumerate(sources):
+                if should_stop is not None and should_stop():
+                    break
+
+                future = executor.submit(
+                    self.ingest_source,
+                    source,
+                    sitemap_limit=sitemap_limit,
+                    max_articles=max_articles_per_source,
+                    batch_size=batch_size,
+                    article_request_delay_seconds=article_request_delay_seconds,
+                    ignore_last_indexed_at=ignore_last_indexed_at,
+                    should_stop=should_stop,
+                )
+                futures_by_index[future] = source_index
+
+            for future in as_completed(futures_by_index):
+                if future.cancelled():
+                    continue
+
+                source_index = futures_by_index[future]
+                result = future.result()
+                ordered_results[source_index] = result
+                if result.stopped:
+                    # Уже запущенные источники завершатся мягко сами, а не стартовавшие задачи отменяем.
+                    for pending_future in futures_by_index:
+                        if pending_future is not future:
+                            pending_future.cancel()
+
+        return [result for result in ordered_results if result is not None]
 
     def ingest_source(
         self,
@@ -242,16 +338,17 @@ class IngestionService:
                 article_request_delay_seconds=article_request_delay_seconds,
             ):
                 result.found += len(extracted_articles)
-                saved_article_ids = self._save_extracted_article_batch(source, extracted_articles, result)
+                with self.write_lock:
+                    saved_article_ids = self._save_extracted_article_batch(source, extracted_articles, result)
 
-                if saved_article_ids:
-                    # FAISS обновляем после каждой успешной пачки SQLite-записей, чтобы поиск видел статьи постепенно.
-                    append_result = self.indexing_service.append_articles_by_ids(saved_article_ids)
-                    result.indexed += append_result.articles_count
+                    if saved_article_ids:
+                        # FAISS обновляем после каждой успешной пачки SQLite-записей, чтобы поиск видел статьи постепенно.
+                        append_result = self.indexing_service.append_articles_by_ids(saved_article_ids)
+                        result.indexed += append_result.articles_count
 
-                # При мягкой остановке финальный блок ниже не выполнится, поэтому фиксируем
-                # безопасный checkpoint после каждой уже обработанной пачки.
-                self._update_last_indexed_at_after_batch(source, extracted_articles)
+                    # При мягкой остановке финальный блок ниже не выполнится, поэтому фиксируем
+                    # безопасный checkpoint после каждой уже обработанной пачки.
+                    self._update_last_indexed_at_after_batch(source, extracted_articles)
 
                 if should_stop is not None and should_stop():
                     # Остановка мягкая: уже сохраненная пачка остается в SQLite/FAISS, следующую пачку не начинаем.

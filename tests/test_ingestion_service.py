@@ -224,6 +224,47 @@ class IngestionServiceTest(unittest.TestCase):
         self.assertEqual(parser_kwargs["batch_size"], 100)
         self.assertEqual(parser_kwargs["stop_after_published_at"], source.last_indexed_at)
 
+    def test_ingest_active_sources_accepts_parallel_workers_and_keeps_source_order(self) -> None:
+        """Параллельный сбор активных источников возвращает результаты в порядке списка источников."""
+        first_source = build_fake_source()
+        second_source = build_fake_source(source_id=6, base_url="https://second.test/sitemap.xml")
+
+        service = IngestionService(
+            source_repository=FakeMultiSourceRepository([first_source, second_source]),
+            news_repository=FakeNewsRepository(created_ids=[201, 202]),
+            article_type_repository=FakeArticleTypeRepository(),
+            indexing_service=FakeIndexingService(),
+            logging_service=FakeLoggingService(),
+            sitemap_batch_parser=fake_source_aware_batch_parser,
+        )
+
+        results = service.ingest_active_sources(
+            max_workers=2,
+            max_articles_per_source=1,
+            batch_size=1,
+        )
+
+        self.assertEqual([result.source_id for result in results], [5, 6])
+        self.assertEqual([result.saved for result in results], [1, 1])
+
+    def test_ingest_source_uses_write_lock_for_batch_save_and_index(self) -> None:
+        """Запись пачек в SQLite и FAISS идет через общий lock, чтобы потоки не писали одновременно."""
+        write_lock = FakeWriteLock()
+
+        service = IngestionService(
+            source_repository=FakeSourceRepository(build_fake_source()),
+            news_repository=FakeNewsRepository(created_ids=[101, 102, 103]),
+            article_type_repository=FakeArticleTypeRepository(),
+            indexing_service=FakeIndexingService(),
+            logging_service=FakeLoggingService(),
+            sitemap_batch_parser=fake_sitemap_batch_parser,
+            write_lock=write_lock,
+        )
+
+        service.ingest_source(service.source_repository.source, max_articles=3, batch_size=2)
+
+        self.assertEqual(write_lock.enter_count, 2)
+
 
 class FakeSourceRepository:
     """Тестовый репозиторий источников без обращения к SQLite."""
@@ -246,6 +287,25 @@ class FakeSourceRepository:
         self.last_indexed_source_id = source_id
         self.last_indexed_at = indexed_at
         return True
+
+
+class FakeMultiSourceRepository:
+    """Тестовый репозиторий, который возвращает несколько активных источников."""
+
+    def __init__(self, sources: list[Source]) -> None:
+        self.sources = sources
+
+    def list_sources(self, only_active: bool = False) -> list[Source]:
+        """Вернуть набор источников для проверки сбора по нескольким сайтам."""
+        return self.sources
+
+    def update_last_indexed_at(self, source_id: int, indexed_at: datetime) -> bool:
+        """Обновить checkpoint нужного источника в памяти теста."""
+        for source in self.sources:
+            if source.id == source_id:
+                source.last_indexed_at = indexed_at
+                return True
+        return False
 
 
 class FakeNewsRepository:
@@ -314,6 +374,22 @@ class FakeLoggingService:
         return len(self.source_events)
 
 
+class FakeWriteLock:
+    """Простой lock-заменитель, который считает входы в защищенный блок."""
+
+    def __init__(self) -> None:
+        self.enter_count = 0
+
+    def __enter__(self):
+        """Зафиксировать вход в критическую секцию."""
+        self.enter_count += 1
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> bool:
+        """Не подавлять исключения из защищенного блока."""
+        return False
+
+
 def fake_sitemap_batch_parser(*args, **kwargs):
     """Вернуть тестовые статьи двумя пачками без сетевых запросов."""
     max_articles = kwargs.get("max_articles", 3)
@@ -345,6 +421,19 @@ def fake_sitemap_batch_parser(*args, **kwargs):
         yield selected_articles[2:]
 
 
+def fake_source_aware_batch_parser(sitemap_index_url: str, *args, **kwargs):
+    """Вернуть одну статью с URL, зависящим от источника."""
+    text = " ".join(["Содержательный текст статьи из отдельного источника."] * 20)
+    yield [
+        ExtractedArticle(
+            url=f"{sitemap_index_url}/article",
+            title="Статья источника",
+            text=text,
+            published_at=datetime(2026, 1, 1),
+        )
+    ]
+
+
 def fake_short_article_batch_parser(*args, **kwargs):
     """Вернуть статью с коротким текстом, похожим на служебный фрагмент страницы."""
     yield [
@@ -362,15 +451,19 @@ def failing_sitemap_batch_parser(*args, **kwargs):
     raise RuntimeError("parser failed")
 
 
-def build_fake_source() -> Source:
+def build_fake_source(
+    *,
+    source_id: int = 5,
+    base_url: str = "https://example.test/sitemap.xml",
+) -> Source:
     """Собрать тестовый источник для сценариев ingestion."""
     source = Source(
         source_type_id=1,
-        base_url="https://example.test/sitemap.xml",
+        base_url=base_url,
         name="Тестовый источник",
         is_active=True,
     )
-    source.id = 5
+    source.id = source_id
     source.last_indexed_at = datetime(2026, 4, 29, 22, 49, 20)
     return source
 

@@ -87,7 +87,10 @@ def ingestion_status():
 def _run_ingestion_task() -> None:
     """Выполнить ingestion всех активных источников и обновить in-memory статус."""
     try:
-        scheduled_result = IngestionService().run_scheduled_ingestion(should_stop=_should_stop_requested)
+        scheduled_result = IngestionService().run_scheduled_ingestion(
+            max_workers=2,
+            should_stop=_should_stop_requested,
+        )
     except Exception as error:
         # В фоне нельзя отдавать traceback пользователю, поэтому сохраняем краткую причину в статус.
         with _task_lock:

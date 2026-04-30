@@ -71,6 +71,7 @@ class IngestionControllerTest(unittest.TestCase):
 
         self.assertTrue(fake_service.was_called)
         self.assertTrue(fake_service.received_should_stop_callback)
+        self.assertEqual(fake_service.received_max_workers, 2)
         self.assertEqual(payload["mode"], "initial")
         self.assertEqual(payload["article_count_before"], 250)
         self.assertEqual(payload["results"][0]["saved"], 2)
@@ -82,11 +83,13 @@ class FakeScheduledIngestionService:
 
     was_called = False
     received_should_stop_callback = False
+    received_max_workers = None
 
     def run_scheduled_ingestion(self, **kwargs) -> ScheduledIngestionResult:
         """Вернуть готовый результат планового сбора."""
         type(self).was_called = True
         type(self).received_should_stop_callback = callable(kwargs.get("should_stop"))
+        type(self).received_max_workers = kwargs.get("max_workers")
         return ScheduledIngestionResult(
             mode="initial",
             article_count_before=250,
