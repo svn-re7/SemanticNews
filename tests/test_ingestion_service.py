@@ -100,6 +100,7 @@ class IngestionServiceTest(unittest.TestCase):
         """Остановка между пачками сохраняет уже обработанную пачку и не начинает следующую."""
         indexing_service = FakeIndexingService()
         source_repository = FakeSourceRepository(build_fake_source())
+        source_repository.source.last_indexed_at = None
         service = IngestionService(
             source_repository=source_repository,
             news_repository=FakeNewsRepository(created_ids=[101, 102, 103]),
@@ -119,7 +120,8 @@ class IngestionServiceTest(unittest.TestCase):
         self.assertTrue(result.stopped)
         self.assertEqual(result.saved, 2)
         self.assertEqual(indexing_service.append_calls, [[101, 102]])
-        self.assertIsNone(source_repository.last_indexed_source_id)
+        self.assertEqual(source_repository.last_indexed_source_id, 5)
+        self.assertEqual(source_repository.last_indexed_at, datetime(2026, 1, 1))
 
     def test_ingest_source_passes_article_delay_to_batch_parser(self) -> None:
         """Ingestion передает parser-слою настройку паузы между HTML-запросами."""
@@ -229,6 +231,7 @@ class FakeSourceRepository:
     def __init__(self, source: Source) -> None:
         self.source = source
         self.last_indexed_source_id: int | None = None
+        self.last_indexed_at: datetime | None = None
 
     def get_by_id(self, source_id: int) -> Source | None:
         """Вернуть тестовый источник по id."""
@@ -241,6 +244,7 @@ class FakeSourceRepository:
     def update_last_indexed_at(self, source_id: int, indexed_at: datetime) -> bool:
         """Запомнить обновление времени последнего ingestion."""
         self.last_indexed_source_id = source_id
+        self.last_indexed_at = indexed_at
         return True
 
 

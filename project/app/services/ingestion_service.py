@@ -249,6 +249,10 @@ class IngestionService:
                     append_result = self.indexing_service.append_articles_by_ids(saved_article_ids)
                     result.indexed += append_result.articles_count
 
+                # При мягкой остановке финальный блок ниже не выполнится, поэтому фиксируем
+                # безопасный checkpoint после каждой уже обработанной пачки.
+                self._update_last_indexed_at_after_batch(source, extracted_articles)
+
                 if should_stop is not None and should_stop():
                     # Остановка мягкая: уже сохраненная пачка остается в SQLite/FAISS, следующую пачку не начинаем.
                     result.stopped = True
@@ -379,3 +383,27 @@ class IngestionService:
                 saved_article_ids.append(saved_article_id)
 
         return saved_article_ids
+
+    def _update_last_indexed_at_after_batch(
+        self,
+        source: Source,
+        extracted_articles: list[ExtractedArticle],
+    ) -> None:
+        """Обновить checkpoint источника после пачки, которая уже прошла SQLite/FAISS."""
+        # Для частичного сбора нельзя ставить datetime.now(): это скажет parser-у,
+        # что источник полностью проверен до текущего момента, хотя пользователь мог нажать stop.
+        processed_dates = [
+            extracted_article.published_at
+            for extracted_article in extracted_articles
+            if extracted_article.published_at is not None
+        ]
+        if not processed_dates:
+            return
+
+        # Самая старая дата в обработанной пачке означает: до этой точки мы уже дошли безопасно.
+        batch_checkpoint = min(processed_dates)
+        if source.last_indexed_at is not None and source.last_indexed_at >= batch_checkpoint:
+            return
+
+        self.source_repository.update_last_indexed_at(source.id, batch_checkpoint)
+        source.last_indexed_at = batch_checkpoint
