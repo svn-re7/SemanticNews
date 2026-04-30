@@ -24,6 +24,9 @@ from app.services.embedding_service import EmbeddingService
 from app.services.logging_service import LoggingService
 
 
+DEFAULT_MIN_RELEVANCE = 0.3
+
+
 class SearchService:
     """Сервис семантического поиска по FAISS с возвратом статей из SQLite."""
 
@@ -37,6 +40,7 @@ class SearchService:
         logging_service: LoggingService | None = None,
         index_path: Path | None = None,
         id_map_path: Path | None = None,
+        min_relevance: float = DEFAULT_MIN_RELEVANCE,
     ) -> None:
         # Подменяемые зависимости делают сервис проверяемым без Flask, SQLite и реальной ML-модели.
         # В обычном запуске сюда ничего не передают, и сервис сам берет реальные зависимости приложения.
@@ -52,6 +56,10 @@ class SearchService:
         # Пути тоже можно подменить в тестах, чтобы не трогать рабочие файлы из project/instance.
         self.index_path = index_path if index_path is not None else Config.FAISS_INDEX_PATH
         self.id_map_path = id_map_path if id_map_path is not None else Config.FAISS_ID_MAP_PATH
+        if min_relevance < 0 or min_relevance > 1:
+            raise ValueError("Минимальная релевантность должна быть в диапазоне от 0 до 1.")
+        # IndexFlatIP по нормализованным embeddings дает cosine similarity: 1.0 близко, 0.0 почти не связано.
+        self.min_relevance = min_relevance
 
     def search(self, query_text: str, top_k: int = 5) -> SearchResponseDTO:
         """Выполнить семантический поиск и сохранить историю запроса."""
@@ -75,6 +83,7 @@ class SearchService:
         distances, positions = index.search(query_vector, candidate_limit)
         # FAISS возвращает позиции внутри индекса, а не id статей из SQLite.
         found_pairs = self._collect_found_pairs(distances=distances[0], positions=positions[0], article_ids=article_ids)
+        found_pairs = self._filter_pairs_by_min_relevance(found_pairs)
 
         # Запрос сохраняем отдельно, чтобы потом можно было показать историю поиска или анализировать выдачу.
         request_id = self.request_repository.create(
@@ -211,6 +220,15 @@ class SearchService:
             # position — это индекс в JSON-списке, а значение списка — настоящий Article.id из SQLite.
             found_pairs.append((article_ids[int(position)], float(distance)))
         return found_pairs
+
+    def _filter_pairs_by_min_relevance(self, found_pairs: list[tuple[int, float]]) -> list[tuple[int, float]]:
+        """Оставить только FAISS-кандидатов, которые проходят минимальный порог релевантности."""
+        # Порог применяем до чтения статей из SQLite, чтобы не загружать заведомо слабые совпадения.
+        return [
+            (article_id, relevance)
+            for article_id, relevance in found_pairs
+            if relevance >= self.min_relevance
+        ]
 
     def _candidate_limit(self, *, top_k: int, index_size: int) -> int:
         """Посчитать, сколько кандидатов нужно запросить у FAISS до фильтрации по активности источников."""

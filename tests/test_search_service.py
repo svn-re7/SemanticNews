@@ -162,6 +162,39 @@ class SearchServiceTest(unittest.TestCase):
                 [(20, 1), (30, 2)],
             )
 
+    def test_search_filters_results_below_min_relevance(self) -> None:
+        """Поиск не показывает и не сохраняет результаты ниже минимального порога релевантности."""
+        articles = [
+            self._article(article_id=10, title="Сильное совпадение"),
+            self._article(article_id=20, title="Слабое совпадение"),
+        ]
+        result_repository = FakeSearchResultRepository()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            index_path = Path(temp_dir) / "news.index"
+            id_map_path = Path(temp_dir) / "news_index_ids.json"
+            self._write_low_relevance_index(index_path)
+            self._write_test_id_map(id_map_path)
+
+            service = SearchService(
+                embedding_service=FakeEmbeddingService(),
+                news_repository=FakeNewsRepository(articles),
+                request_repository=FakeRequestRepository(),
+                search_result_repository=result_repository,
+                logging_service=FakeLoggingService(),
+                index_path=index_path,
+                id_map_path=id_map_path,
+                min_relevance=0.3,
+            )
+
+            result = service.search("экономика", top_k=2)
+
+        self.assertEqual([item.article_id for item in result.items], [10])
+        self.assertEqual(
+            [(item.article_id, item.position, item.relevance) for item in result_repository.created_results],
+            [(10, 1, 1.0)],
+        )
+
     def test_get_saved_results_returns_persisted_results_without_embedding_search(self) -> None:
         """Сохраненная выдача читается из SQLite-слоя без повторного FAISS-поиска."""
         articles = [
@@ -270,7 +303,7 @@ class SearchServiceTest(unittest.TestCase):
         embeddings = np.array(
             [
                 [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
+                [0.5, 0.0, 0.0],
             ],
             dtype=np.float32,
         )
@@ -305,6 +338,19 @@ class SearchServiceTest(unittest.TestCase):
             json.dumps({"article_ids": [10, 20, 30], "vector_size": 3, "index_size": 3}),
             encoding="utf-8",
         )
+
+    def _write_low_relevance_index(self, index_path: Path) -> None:
+        """Создать FAISS-индекс, где второй результат ниже стартового порога релевантности."""
+        embeddings = np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.2, 0.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        index = faiss.IndexFlatIP(3)
+        index.add(embeddings)
+        faiss.write_index(index, str(index_path))
 
     def _article(self, article_id: int, title: str, *, is_active: bool = True) -> Article:
         """Собрать минимальную статью с источником для результата поиска."""
