@@ -75,6 +75,27 @@ class IngestionServiceTest(unittest.TestCase):
         self.assertEqual(result.indexed, 3)
         self.assertEqual(indexing_service.append_calls, [[101, 102], [103]])
 
+    def test_ingest_source_skips_too_short_article_text(self) -> None:
+        """Ingestion не сохраняет статьи, у которых вместо полноценного текста короткий фрагмент."""
+        indexing_service = FakeIndexingService()
+        source = build_fake_source()
+
+        service = IngestionService(
+            source_repository=FakeSourceRepository(source),
+            news_repository=FakeNewsRepository(created_ids=[101]),
+            article_type_repository=FakeArticleTypeRepository(),
+            indexing_service=indexing_service,
+            logging_service=FakeLoggingService(),
+            sitemap_batch_parser=fake_short_article_batch_parser,
+        )
+
+        result = service.ingest_source(source, sitemap_limit=1, max_articles=1)
+
+        self.assertEqual(result.found, 1)
+        self.assertEqual(result.saved, 0)
+        self.assertEqual(result.skipped_low_quality_text, 1)
+        self.assertEqual(indexing_service.append_calls, [])
+
     def test_ingest_source_stops_between_batches(self) -> None:
         """Остановка между пачками сохраняет уже обработанную пачку и не начинает следующую."""
         indexing_service = FakeIndexingService()
@@ -292,23 +313,24 @@ class FakeLoggingService:
 def fake_sitemap_batch_parser(*args, **kwargs):
     """Вернуть тестовые статьи двумя пачками без сетевых запросов."""
     max_articles = kwargs.get("max_articles", 3)
+    text = " ".join(["Содержательный текст тестовой статьи."] * 20)
     articles = [
         ExtractedArticle(
             url="https://example.test/1",
             title="Первая статья",
-            text="Текст первой статьи",
+            text=text,
             published_at=datetime(2026, 1, 1),
         ),
         ExtractedArticle(
             url="https://example.test/2",
             title="Вторая статья",
-            text="Текст второй статьи",
+            text=text,
             published_at=datetime(2026, 1, 2),
         ),
         ExtractedArticle(
             url="https://example.test/3",
             title="Третья статья",
-            text="Текст третьей статьи",
+            text=text,
             published_at=datetime(2026, 1, 3),
         ),
     ]
@@ -317,6 +339,18 @@ def fake_sitemap_batch_parser(*args, **kwargs):
     yield selected_articles[:2]
     if len(selected_articles) > 2:
         yield selected_articles[2:]
+
+
+def fake_short_article_batch_parser(*args, **kwargs):
+    """Вернуть статью с коротким текстом, похожим на служебный фрагмент страницы."""
+    yield [
+        ExtractedArticle(
+            url="https://example.test/short",
+            title="Короткая статья",
+            text="Поделиться: Читайте также",
+            published_at=datetime(2026, 1, 1),
+        )
+    ]
 
 
 def failing_sitemap_batch_parser(*args, **kwargs):

@@ -74,6 +74,7 @@ class IngestionControllerTest(unittest.TestCase):
         self.assertEqual(payload["mode"], "initial")
         self.assertEqual(payload["article_count_before"], 250)
         self.assertEqual(payload["results"][0]["saved"], 2)
+        self.assertIn("skipped_low_quality_text", payload["results"][0])
 
 
 class FakeScheduledIngestionService:

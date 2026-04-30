@@ -147,6 +147,7 @@ def _serialize_state(*, started: bool | None = None) -> dict:
                     "indexed": result.indexed,
                     "skipped_duplicates": result.skipped_duplicates,
                     "skipped_empty_text": result.skipped_empty_text,
+                    "skipped_low_quality_text": result.skipped_low_quality_text,
                     "skipped_missing_type": result.skipped_missing_type,
                 }
                 for result in _task_state.results

@@ -23,6 +23,9 @@ from app.services.logging_service import LoggingService
 logger = logging.getLogger(__name__)
 
 
+MIN_ARTICLE_TEXT_LENGTH = 300
+
+
 @dataclass(slots=True)
 class IngestionResult:
     """Итог одного запуска сбора статей из источника."""
@@ -33,6 +36,7 @@ class IngestionResult:
     saved: int = 0
     skipped_duplicates: int = 0
     skipped_empty_text: int = 0
+    skipped_low_quality_text: int = 0
     skipped_missing_type: int = 0
     indexed: int = 0
     stopped: bool = False
@@ -299,6 +303,11 @@ class IngestionService:
             result.skipped_empty_text += 1
             return None
 
+        # Короткие фрагменты почти всегда оказываются служебными блоками страницы, а не полноценной статьей.
+        if not self._has_enough_article_text(parsed_article.text):
+            result.skipped_low_quality_text += 1
+            return None
+
         # Дубли отсекаются на уровне сервиса до записи, потому что это бизнес-правило ingestion.
         if self.news_repository.get_by_direct_url(parsed_article.direct_url) is not None:
             result.skipped_duplicates += 1
@@ -333,6 +342,10 @@ class IngestionService:
 
         result.saved += 1
         return article_id
+
+    def _has_enough_article_text(self, text: str) -> bool:
+        """Проверить, что текст похож на полноценную статью, а не на короткий служебный фрагмент."""
+        return len(text.strip()) >= MIN_ARTICLE_TEXT_LENGTH
 
     def _resolve_article_type_id(self, article_type_code: str) -> int | None:
         """Найти идентификатор типа материала по коду с безопасным fallback на other."""
