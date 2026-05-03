@@ -28,6 +28,9 @@ project/instance/news.index
 project/instance/*.db
 project/instance/*.index
 project/instance/*.json
+project/instance/telegram/
+project/instance/*.session
+project/instance/*.session-journal
 
 # Project-local assistant docs
 AGENTS.md

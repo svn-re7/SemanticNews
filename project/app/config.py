@@ -23,3 +23,10 @@ class Config:
     EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
     # Каталог локально дообученной модели, которую провайдер сможет подхватить без смены остального кода.
     ADAPTED_EMBEDDING_MODEL_DIR = BASE_DIR / "instance" / "models" / "news-embeddings"
+
+    # Telegram runtime-файлы хранятся локально и не попадают в git.
+    TELEGRAM_RUNTIME_DIR = BASE_DIR / "instance" / "telegram"
+    # Config содержит api_id/api_hash, которые пользователь вводит через UI один раз.
+    TELEGRAM_CONFIG_PATH = TELEGRAM_RUNTIME_DIR / "config.json"
+    # Session хранит авторизацию конкретного Telegram-аккаунта для Telethon.
+    TELEGRAM_SESSION_PATH = TELEGRAM_RUNTIME_DIR / "semanticnews.session"
