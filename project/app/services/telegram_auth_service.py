@@ -98,11 +98,14 @@ class TelegramAuthService:
         if not normalized_phone:
             raise ValueError("Телефон Telegram не должен быть пустым.")
 
-        client = self._build_client(normalized_api_id, normalized_api_hash)
         try:
-            sent_code = self._run_client_call(client, "send_code_request", normalized_phone)
-        finally:
-            self._disconnect_client(client)
+            client = self._build_client(normalized_api_id, normalized_api_hash)
+            try:
+                sent_code = self._run_client_call(client, "send_code_request", normalized_phone)
+            finally:
+                self._disconnect_client(client)
+        except Exception as error:
+            return self._make_error_result(error)
         phone_code_hash = getattr(sent_code, "phone_code_hash", None)
 
         # Config пишем только после успешного sign_in, поэтому до ввода кода держим данные в памяти.
@@ -121,22 +124,25 @@ class TelegramAuthService:
         if not normalized_code:
             raise ValueError("Код подтверждения не должен быть пустым.")
 
-        client = self._build_client(pending.api_id, pending.api_hash)
         try:
-            self._run_client_call(
-                client,
-                "sign_in",
-                phone=pending.phone,
-                code=normalized_code,
-                phone_code_hash=pending.phone_code_hash,
-            )
-        except self.password_error_class:
-            return TelegramAuthResult(
-                status="password_required",
-                message="Telegram требует пароль двухфакторной защиты.",
-            )
-        finally:
-            self._disconnect_client(client)
+            client = self._build_client(pending.api_id, pending.api_hash)
+            try:
+                self._run_client_call(
+                    client,
+                    "sign_in",
+                    phone=pending.phone,
+                    code=normalized_code,
+                    phone_code_hash=pending.phone_code_hash,
+                )
+            except self.password_error_class:
+                return TelegramAuthResult(
+                    status="password_required",
+                    message="Telegram требует пароль двухфакторной защиты.",
+                )
+            finally:
+                self._disconnect_client(client)
+        except Exception as error:
+            return self._make_error_result(error)
 
         self._write_config(api_id=pending.api_id, api_hash=pending.api_hash)
         type(self)._pending_auth = None
@@ -149,11 +155,14 @@ class TelegramAuthService:
         if not normalized_password:
             raise ValueError("Пароль двухфакторной защиты не должен быть пустым.")
 
-        client = self._build_client(pending.api_id, pending.api_hash)
         try:
-            self._run_client_call(client, "sign_in", password=normalized_password)
-        finally:
-            self._disconnect_client(client)
+            client = self._build_client(pending.api_id, pending.api_hash)
+            try:
+                self._run_client_call(client, "sign_in", password=normalized_password)
+            finally:
+                self._disconnect_client(client)
+        except Exception as error:
+            return self._make_error_result(error)
 
         self._write_config(api_id=pending.api_id, api_hash=pending.api_hash)
         type(self)._pending_auth = None
@@ -164,7 +173,12 @@ class TelegramAuthService:
         # Telethon session хранится в SQLite-файле, поэтому папка должна существовать до создания клиента.
         self.session_path.parent.mkdir(parents=True, exist_ok=True)
         client = self.client_factory(str(self.session_path), api_id, api_hash)
-        self._run_client_call(client, "connect")
+        try:
+            self._run_client_call(client, "connect")
+        except Exception:
+            # Если connect упал, клиент все равно мог открыть session-файл или сокет.
+            self._disconnect_client(client)
+            raise
         return client
 
     def _run_client_call(self, client: Any, method_name: str, *args: Any, **kwargs: Any) -> Any:
@@ -178,7 +192,18 @@ class TelegramAuthService:
     def _disconnect_client(self, client: Any) -> None:
         """Закрыть Telethon-клиент, если у него есть метод disconnect."""
         if hasattr(client, "disconnect"):
-            self._run_client_call(client, "disconnect")
+            try:
+                self._run_client_call(client, "disconnect")
+            except Exception:
+                # Ошибка закрытия не должна маскировать исходную ошибку Telegram-подключения.
+                pass
+
+    def _make_error_result(self, error: Exception) -> TelegramAuthResult:
+        """Преобразовать ошибку Telethon в результат, который можно показать в UI."""
+        return TelegramAuthResult(
+            status="error",
+            message=f"Не удалось выполнить Telegram-авторизацию: {error}",
+        )
 
     def _read_config(self) -> dict[str, Any]:
         """Прочитать локальный Telegram config из instance."""

@@ -27,7 +27,7 @@ def request_telegram_code():
     except ValueError as error:
         return _render_auth_page(error_message=str(error)), 400
 
-    return _render_auth_page(result=result, show_code_form=True)
+    return _render_auth_page(result=result, show_code_form=result.status == "code_sent")
 
 
 @telegram_bp.post("/auth/confirm-code")
@@ -40,7 +40,7 @@ def confirm_telegram_code():
         return _render_auth_page(error_message=str(error), show_code_form=True), 400
 
     show_password_form = result.status == "password_required"
-    return _render_auth_page(result=result, show_password_form=show_password_form)
+    return _render_auth_page(result=result, show_code_form=result.status == "error", show_password_form=show_password_form)
 
 
 @telegram_bp.post("/auth/confirm-password")
@@ -52,7 +52,7 @@ def confirm_telegram_password():
     except ValueError as error:
         return _render_auth_page(error_message=str(error), show_password_form=True), 400
 
-    return _render_auth_page(result=result)
+    return _render_auth_page(result=result, show_password_form=result.status == "error")
 
 
 def _render_auth_page(

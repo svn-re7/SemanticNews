@@ -57,6 +57,21 @@ class TelegramAuthServiceTest(unittest.TestCase):
         self.assertEqual(result.status, "code_sent")
         self.assertTrue(missing_dir_session_path.parent.exists())
 
+    def test_request_code_returns_error_when_telegram_connection_fails(self) -> None:
+        """Сетевая ошибка Telegram возвращается как результат, а не пробрасывается во Flask."""
+        service = TelegramAuthService(
+            config_path=self.config_path,
+            session_path=self.session_path,
+            client_factory=ConnectionFailingTelegramClient,
+            password_error_class=FakePasswordRequired,
+        )
+
+        result = service.request_code(api_id="12345", api_hash="hash-value", phone="+79990000000")
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("Telegram", result.message)
+        self.assertFalse(self.config_path.exists())
+
     def test_confirm_code_saves_config_after_successful_authorization(self) -> None:
         """Успешное подтверждение кода сохраняет `api_id/api_hash` в локальный config."""
         service = TelegramAuthService(
@@ -179,6 +194,13 @@ class DirectoryCheckingTelegramClient(FakeTelegramClient):
         if not Path(session_path).parent.exists():
             raise RuntimeError("session directory does not exist")
         super().__init__(session_path, api_id, api_hash)
+
+
+class ConnectionFailingTelegramClient(FakeTelegramClient):
+    """Fake-клиент, который имитирует недоступность серверов Telegram."""
+
+    async def connect(self) -> None:
+        raise ConnectionError("Connection to Telegram failed 5 time(s)")
 
 
 if __name__ == "__main__":
