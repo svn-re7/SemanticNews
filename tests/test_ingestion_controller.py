@@ -31,6 +31,7 @@ class IngestionControllerTest(unittest.TestCase):
         self.assertIn("/ingestion/start", response.text)
         self.assertIn("/ingestion/start-full", response.text)
         self.assertIn("/ingestion/stop", response.text)
+        self.assertIn("ingestion-results-table", response.text)
 
     def test_ingestion_status_endpoint_returns_json(self) -> None:
         """Endpoint статуса ingestion возвращает JSON для polling из UI."""
@@ -76,6 +77,7 @@ class IngestionControllerTest(unittest.TestCase):
         self.assertEqual(fake_service.received_max_workers, ingestion_controller.INGESTION_MAX_WORKERS)
         self.assertEqual(payload["mode"], "initial")
         self.assertEqual(payload["article_count_before"], 250)
+        self.assertEqual(payload["results"][0]["source_name"], "Тестовый источник")
         self.assertEqual(payload["results"][0]["saved"], 2)
         self.assertIn("skipped_low_quality_text", payload["results"][0])
 
@@ -165,6 +167,7 @@ class FakeScheduledIngestionService:
                 IngestionResult(
                     source_id=5,
                     source_base_url="https://example.test/sitemap.xml",
+                    source_name="Тестовый источник",
                     found=2,
                     saved=2,
                     indexed=2,

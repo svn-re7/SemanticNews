@@ -40,6 +40,27 @@
         Статус еще не загружен.
     </div>
 
+    <div class="card d-none" id="ingestion-results-card">
+        <div class="card-header">
+            Итоги по источникам
+        </div>
+        <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0" id="ingestion-results-table">
+                <thead>
+                    <tr>
+                        <th>Источник</th>
+                        <th class="text-end">Найдено</th>
+                        <th class="text-end">Сохранено</th>
+                        <th class="text-end">В FAISS</th>
+                        <th class="text-end">Дубли</th>
+                        <th class="text-end">Пропущено</th>
+                    </tr>
+                </thead>
+                <tbody id="ingestion-results-body"></tbody>
+            </table>
+        </div>
+    </div>
+
     <form id="ingestion-start-form" method="post" action="{{ url_for('ingestion.start_ingestion') }}"></form>
     <form id="ingestion-full-start-form" method="post" action="{{ url_for('ingestion.start_full_ingestion') }}"></form>
     <form id="ingestion-stop-form" method="post" action="{{ url_for('ingestion.stop_ingestion') }}"></form>
@@ -55,6 +76,42 @@
     const stopForm = document.querySelector("#ingestion-stop-form");
     const statusBlock = document.querySelector("#ingestion-status");
     const statusUrl = statusBlock.dataset.statusUrl;
+    const resultsCard = document.querySelector("#ingestion-results-card");
+    const resultsBody = document.querySelector("#ingestion-results-body");
+
+    const appendCell = (row, value, className = "") => {
+        const cell = document.createElement("td");
+        cell.textContent = value;
+        if (className) {
+            cell.className = className;
+        }
+        row.appendChild(cell);
+    };
+
+    const renderResults = (results) => {
+        resultsBody.replaceChildren();
+        if (!results || results.length === 0) {
+            resultsCard.classList.add("d-none");
+            return;
+        }
+
+        resultsCard.classList.remove("d-none");
+        for (const result of results) {
+            const skipped = result.skipped_empty_text
+                + result.skipped_low_quality_text
+                + result.skipped_missing_type;
+            const row = document.createElement("tr");
+
+            appendCell(row, result.source_name || result.source_base_url || `Источник ${result.source_id}`);
+            appendCell(row, result.found, "text-end");
+            appendCell(row, result.saved, "text-end");
+            appendCell(row, result.indexed, "text-end");
+            appendCell(row, result.skipped_duplicates, "text-end");
+            appendCell(row, skipped, "text-end");
+
+            resultsBody.appendChild(row);
+        }
+    };
 
     const renderStatus = (data) => {
         const parts = [data.message];
@@ -82,6 +139,7 @@
         button.disabled = data.is_running;
         fullButton.disabled = data.is_running;
         stopButton.disabled = !data.is_running || data.should_stop;
+        renderResults(data.results);
     };
 
     const loadStatus = async () => {

@@ -247,6 +247,7 @@ class IngestionService:
             result = IngestionResult(
                 source_id=source.id,
                 source_base_url=source.base_url,
+                source_name=source.name,
             )
 
             # Parser теперь отдает готовые статьи частями, чтобы длинная загрузка не ждала финала всего обхода.

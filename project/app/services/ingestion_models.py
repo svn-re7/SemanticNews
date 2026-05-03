@@ -9,6 +9,7 @@ class IngestionResult:
 
     source_id: int
     source_base_url: str
+    source_name: str | None = None
     found: int = 0
     saved: int = 0
     skipped_duplicates: int = 0

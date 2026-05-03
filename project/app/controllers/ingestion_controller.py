@@ -188,6 +188,8 @@ def _serialize_state(*, started: bool | None = None) -> dict:
             "results": [
                 {
                     "source_id": result.source_id,
+                    "source_name": result.source_name or result.source_base_url,
+                    "source_base_url": result.source_base_url,
                     "found": result.found,
                     "saved": result.saved,
                     "indexed": result.indexed,
