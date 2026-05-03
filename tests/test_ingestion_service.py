@@ -337,8 +337,8 @@ class IngestionServiceTest(unittest.TestCase):
         self.assertEqual([result.source_id for result in results], [5, 6])
         self.assertEqual([result.saved for result in results], [1, 1])
 
-    def test_ingest_active_sources_runs_sequentially_when_telegram_source_exists(self) -> None:
-        """Если среди источников есть Telegram, сбор временно идет последовательно с одним worker."""
+    def test_ingest_active_sources_uses_mixed_parallel_mode_when_telegram_source_exists(self) -> None:
+        """Telegram идет в отдельном последовательном worker, а web-источники остаются параллельными."""
         html_source = build_fake_source()
         telegram_source = build_fake_source(
             source_id=6,

@@ -12,6 +12,7 @@ from app.parsers.parser_models import ExtractedArticle
 
 
 ClientFactory = Callable[..., Any]
+TELEGRAM_TITLE_MAX_LENGTH = 100
 
 
 def normalize_telegram_message(channel: str, message: Any) -> ExtractedArticle | None:
@@ -205,7 +206,10 @@ def _build_title(text: str) -> str:
     for line in text.splitlines():
         normalized_line = line.strip()
         if normalized_line:
-            return normalized_line[:180]
+            if len(normalized_line) <= TELEGRAM_TITLE_MAX_LENGTH:
+                return normalized_line
+            # Заголовок нужен для UI, поэтому длинный первый абзац Telegram-поста аккуратно сокращаем.
+            return normalized_line[:TELEGRAM_TITLE_MAX_LENGTH - 3].rstrip() + "..."
     return "Telegram-пост"
 
 

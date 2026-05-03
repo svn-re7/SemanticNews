@@ -22,11 +22,18 @@
                 <button class="btn btn-primary" id="ingestion-start-button" type="button">
                     Запустить сбор новостей
                 </button>
+                <button class="btn btn-outline-primary" id="ingestion-full-start-button" type="button">
+                    Полный сбор
+                </button>
                 <button class="btn btn-outline-danger" id="ingestion-stop-button" type="button" disabled>
                     Остановить сбор
                 </button>
             </div>
         </div>
+        <p class="text-muted small mt-3 mb-0">
+            Полный сбор запускает initial-режим: до 1000 материалов с каждого активного источника,
+            без учета даты последнего сбора. Это тяжелее обычного обновления.
+        </p>
     </div>
 
     <div class="alert alert-secondary" id="ingestion-status" data-status-url="{{ url_for('ingestion.ingestion_status') }}">
@@ -34,14 +41,17 @@
     </div>
 
     <form id="ingestion-start-form" method="post" action="{{ url_for('ingestion.start_ingestion') }}"></form>
+    <form id="ingestion-full-start-form" method="post" action="{{ url_for('ingestion.start_full_ingestion') }}"></form>
     <form id="ingestion-stop-form" method="post" action="{{ url_for('ingestion.stop_ingestion') }}"></form>
 </section>
 
 <script>
 (() => {
     const button = document.querySelector("#ingestion-start-button");
+    const fullButton = document.querySelector("#ingestion-full-start-button");
     const stopButton = document.querySelector("#ingestion-stop-button");
     const form = document.querySelector("#ingestion-start-form");
+    const fullForm = document.querySelector("#ingestion-full-start-form");
     const stopForm = document.querySelector("#ingestion-stop-form");
     const statusBlock = document.querySelector("#ingestion-status");
     const statusUrl = statusBlock.dataset.statusUrl;
@@ -70,6 +80,7 @@
         statusBlock.textContent = parts.join(" ");
         statusBlock.className = data.error ? "alert alert-danger" : data.is_running ? "alert alert-info" : "alert alert-secondary";
         button.disabled = data.is_running;
+        fullButton.disabled = data.is_running;
         stopButton.disabled = !data.is_running || data.should_stop;
     };
 
@@ -81,6 +92,16 @@
     button.addEventListener("click", async () => {
         button.disabled = true;
         const response = await fetch(form.action, { method: "POST" });
+        renderStatus(await response.json());
+    });
+
+    fullButton.addEventListener("click", async () => {
+        const confirmed = window.confirm("Полный сбор может занять много времени и проигнорирует дату последнего сбора. Запустить?");
+        if (!confirmed) {
+            return;
+        }
+        fullButton.disabled = true;
+        const response = await fetch(fullForm.action, { method: "POST" });
         renderStatus(await response.json());
     });
 

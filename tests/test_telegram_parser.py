@@ -41,6 +41,21 @@ class TelegramParserTest(unittest.TestCase):
 
         self.assertIsNone(article)
 
+    def test_normalize_message_truncates_long_title(self) -> None:
+        """Длинный первый абзац Telegram-поста сокращается до безопасного UI-заголовка."""
+        long_title = "Очень длинный заголовок Telegram-поста " * 5
+        message = FakeMessage(
+            id=42,
+            text=f"{long_title}\nОсновной текст Telegram-поста.",
+            date=datetime(2026, 5, 1, 12, 30),
+        )
+
+        article = normalize_telegram_message("semantic_news", message)
+
+        self.assertIsNotNone(article)
+        self.assertLessEqual(len(article.title), 100)
+        self.assertTrue(article.title.endswith("..."))
+
     def test_normalize_message_converts_aware_datetime_to_naive_utc(self) -> None:
         """Telegram aware datetime приводится к naive UTC для безопасной записи в SQLite."""
         message = FakeMessage(

@@ -10,6 +10,7 @@ from app.services.ingestion_service import IngestionResult, IngestionService
 
 
 ingestion_bp = Blueprint("ingestion", __name__, url_prefix="/ingestion")
+INGESTION_MAX_WORKERS = 4
 
 
 @dataclass
@@ -26,6 +27,7 @@ class IngestionTaskState:
     article_count_before: int | None = None
     should_stop: bool = False
     stopped: bool = False
+    run_kind: str = "scheduled"
 
 
 _task_state = IngestionTaskState()
@@ -42,7 +44,20 @@ def ingestion_page():
 @ingestion_bp.post("/start")
 def start_ingestion():
     """Запустить ingestion в фоне и сразу вернуть управление UI."""
-    started = _start_background_ingestion("Сбор новостей запущен.")
+    started = _start_background_ingestion("Сбор новостей запущен.", run_kind="scheduled")
+    if not started:
+        return jsonify(_serialize_state(started=False))
+
+    return jsonify(_serialize_state(started=True)), 202
+
+
+@ingestion_bp.post("/start-full")
+def start_full_ingestion():
+    """Запустить полный initial-сбор с игнорированием checkpoint источников."""
+    started = _start_background_ingestion(
+        "Полный сбор новостей запущен. Checkpoint источников будет проигнорирован.",
+        run_kind="full",
+    )
     if not started:
         return jsonify(_serialize_state(started=False))
 
@@ -55,10 +70,10 @@ def start_auto_ingestion_if_needed() -> bool:
     if not service.should_run_auto_ingestion():
         return False
 
-    return _start_background_ingestion("Автообновление новостей запущено.")
+    return _start_background_ingestion("Автообновление новостей запущено.", run_kind="scheduled")
 
 
-def _start_background_ingestion(start_message: str) -> bool:
+def _start_background_ingestion(start_message: str, *, run_kind: str) -> bool:
     """Запустить общий фоновый ingestion, если другая задача еще не выполняется."""
     with _task_lock:
         if _task_state.is_running:
@@ -74,6 +89,7 @@ def _start_background_ingestion(start_message: str) -> bool:
         _task_state.article_count_before = None
         _task_state.should_stop = False
         _task_state.stopped = False
+        _task_state.run_kind = run_kind
 
     # Сбор и построение embeddings могут занять время, поэтому не блокируем HTTP-запрос.
     thread = Thread(target=_run_ingestion_task, daemon=True)
@@ -100,11 +116,23 @@ def ingestion_status():
 
 def _run_ingestion_task() -> None:
     """Выполнить ingestion всех активных источников и обновить in-memory статус."""
+    with _task_lock:
+        run_kind = _task_state.run_kind
+
     try:
-        scheduled_result = IngestionService().run_scheduled_ingestion(
-            max_workers=2,
-            should_stop=_should_stop_requested,
-        )
+        if run_kind == "full":
+            # Полный ручной сбор использует initial-параметры независимо от размера текущей базы.
+            scheduled_result = IngestionService().run_scheduled_ingestion(
+                initial_article_threshold=10**12,
+                initial_articles_per_source=1000,
+                max_workers=INGESTION_MAX_WORKERS,
+                should_stop=_should_stop_requested,
+            )
+        else:
+            scheduled_result = IngestionService().run_scheduled_ingestion(
+                max_workers=INGESTION_MAX_WORKERS,
+                should_stop=_should_stop_requested,
+            )
     except Exception as error:
         # В фоне нельзя отдавать traceback пользователю, поэтому сохраняем краткую причину в статус.
         with _task_lock:
@@ -156,6 +184,7 @@ def _serialize_state(*, started: bool | None = None) -> dict:
             "article_count_before": _task_state.article_count_before,
             "should_stop": _task_state.should_stop,
             "stopped": _task_state.stopped,
+            "run_kind": _task_state.run_kind,
             "results": [
                 {
                     "source_id": result.source_id,

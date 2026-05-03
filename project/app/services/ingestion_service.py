@@ -231,7 +231,7 @@ class IngestionService:
 
         # Репозиторий отвечает только за выборку активных источников, а сам сценарий сбора остается в сервисе.
         sources = self.source_repository.list_sources(only_active=True)
-        if max_workers == 1 or len(sources) <= 1 or self._has_telegram_sources(sources):
+        if max_workers == 1 or len(sources) <= 1:
             return self._ingest_active_sources_sequentially(
                 sources,
                 sitemap_limit=sitemap_limit,
@@ -239,6 +239,17 @@ class IngestionService:
                 batch_size=batch_size,
                 article_request_delay_seconds=article_request_delay_seconds,
                 ignore_last_indexed_at=ignore_last_indexed_at,
+                should_stop=should_stop,
+            )
+        if self._has_telegram_sources(sources):
+            return self._ingest_active_sources_mixed_parallel(
+                sources,
+                sitemap_limit=sitemap_limit,
+                max_articles_per_source=max_articles_per_source,
+                batch_size=batch_size,
+                article_request_delay_seconds=article_request_delay_seconds,
+                ignore_last_indexed_at=ignore_last_indexed_at,
+                max_workers=max_workers,
                 should_stop=should_stop,
             )
 
@@ -334,6 +345,115 @@ class IngestionService:
                             pending_future.cancel()
 
         return [result for result in ordered_results if result is not None]
+
+    def _ingest_active_sources_mixed_parallel(
+        self,
+        sources: list[Source],
+        *,
+        sitemap_limit: int,
+        max_articles_per_source: int,
+        batch_size: int,
+        article_request_delay_seconds: float,
+        ignore_last_indexed_at: bool,
+        max_workers: int,
+        should_stop: Callable[[], bool] | None,
+    ) -> list[IngestionResult]:
+        """Собрать web-источники параллельно, а Telegram-каналы последовательно в одном worker."""
+        ordered_results: list[IngestionResult | None] = [None] * len(sources)
+        telegram_sources: list[tuple[int, Source]] = []
+        web_sources: list[tuple[int, Source]] = []
+
+        for source_index, source in enumerate(sources):
+            if self._is_telegram_source(source):
+                telegram_sources.append((source_index, source))
+            else:
+                web_sources.append((source_index, source))
+
+        futures_by_index: dict[Future[IngestionResult], int] = {}
+        telegram_future: Future[list[tuple[int, IngestionResult]]] | None = None
+        worker_count = min(max_workers, len(web_sources) + (1 if telegram_sources else 0))
+
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            if telegram_sources:
+                # Telethon session общая для приложения, поэтому все Telegram-каналы идут строго последовательно.
+                telegram_future = executor.submit(
+                    self._ingest_indexed_sources_sequentially,
+                    telegram_sources,
+                    sitemap_limit=sitemap_limit,
+                    max_articles_per_source=max_articles_per_source,
+                    batch_size=batch_size,
+                    article_request_delay_seconds=article_request_delay_seconds,
+                    ignore_last_indexed_at=ignore_last_indexed_at,
+                    should_stop=should_stop,
+                )
+
+            for source_index, source in web_sources:
+                if should_stop is not None and should_stop():
+                    break
+
+                future = executor.submit(
+                    self.ingest_source,
+                    source,
+                    sitemap_limit=sitemap_limit,
+                    max_articles=max_articles_per_source,
+                    batch_size=batch_size,
+                    article_request_delay_seconds=article_request_delay_seconds,
+                    ignore_last_indexed_at=ignore_last_indexed_at,
+                    should_stop=should_stop,
+                )
+                futures_by_index[future] = source_index
+
+            for future in as_completed(list(futures_by_index) + ([telegram_future] if telegram_future is not None else [])):
+                if future.cancelled():
+                    continue
+
+                if future is telegram_future:
+                    for source_index, result in future.result():
+                        ordered_results[source_index] = result
+                    if any(result is not None and result.stopped for result in ordered_results):
+                        for pending_future in futures_by_index:
+                            pending_future.cancel()
+                    continue
+
+                source_index = futures_by_index[future]
+                result = future.result()
+                ordered_results[source_index] = result
+                if result.stopped and telegram_future is not None:
+                    telegram_future.cancel()
+
+        return [result for result in ordered_results if result is not None]
+
+    def _ingest_indexed_sources_sequentially(
+        self,
+        indexed_sources: list[tuple[int, Source]],
+        *,
+        sitemap_limit: int,
+        max_articles_per_source: int,
+        batch_size: int,
+        article_request_delay_seconds: float,
+        ignore_last_indexed_at: bool,
+        should_stop: Callable[[], bool] | None,
+    ) -> list[tuple[int, IngestionResult]]:
+        """Собрать заранее выбранные источники последовательно и сохранить их исходные позиции."""
+        results: list[tuple[int, IngestionResult]] = []
+        for source_index, source in indexed_sources:
+            if should_stop is not None and should_stop():
+                break
+
+            result = self.ingest_source(
+                source,
+                sitemap_limit=sitemap_limit,
+                max_articles=max_articles_per_source,
+                batch_size=batch_size,
+                article_request_delay_seconds=article_request_delay_seconds,
+                ignore_last_indexed_at=ignore_last_indexed_at,
+                should_stop=should_stop,
+            )
+            results.append((source_index, result))
+            if result.stopped:
+                break
+
+        return results
 
     def ingest_source(
         self,

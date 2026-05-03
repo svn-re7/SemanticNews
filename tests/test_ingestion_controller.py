@@ -26,8 +26,10 @@ class IngestionControllerTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("Запустить сбор новостей", response.text)
+        self.assertIn("Полный сбор", response.text)
         self.assertIn("Остановить сбор", response.text)
         self.assertIn("/ingestion/start", response.text)
+        self.assertIn("/ingestion/start-full", response.text)
         self.assertIn("/ingestion/stop", response.text)
 
     def test_ingestion_status_endpoint_returns_json(self) -> None:
@@ -71,11 +73,33 @@ class IngestionControllerTest(unittest.TestCase):
 
         self.assertTrue(fake_service.was_called)
         self.assertTrue(fake_service.received_should_stop_callback)
-        self.assertEqual(fake_service.received_max_workers, 2)
+        self.assertEqual(fake_service.received_max_workers, ingestion_controller.INGESTION_MAX_WORKERS)
         self.assertEqual(payload["mode"], "initial")
         self.assertEqual(payload["article_count_before"], 250)
         self.assertEqual(payload["results"][0]["saved"], 2)
         self.assertIn("skipped_low_quality_text", payload["results"][0])
+
+    def test_full_background_task_forces_initial_ingestion(self) -> None:
+        """Полный сбор запускает initial-режим независимо от текущего размера базы."""
+        original_service = ingestion_controller.IngestionService
+        fake_service = FakeScheduledIngestionService
+        fake_service.received_initial_article_threshold = None
+        fake_service.received_initial_articles_per_source = None
+
+        try:
+            ingestion_controller.IngestionService = fake_service
+            with ingestion_controller._task_lock:
+                ingestion_controller._task_state.run_kind = "full"
+
+            ingestion_controller._run_ingestion_task()
+            payload = ingestion_controller._serialize_state()
+        finally:
+            ingestion_controller.IngestionService = original_service
+            reset_ingestion_state()
+
+        self.assertEqual(fake_service.received_initial_article_threshold, 10**12)
+        self.assertEqual(fake_service.received_initial_articles_per_source, 1000)
+        self.assertEqual(payload["run_kind"], "full")
 
     def test_auto_ingestion_starts_background_task_when_sources_need_refresh(self) -> None:
         """Автостарт запускает фоновую задачу, если сервис видит устаревшие источники."""
@@ -124,12 +148,16 @@ class FakeScheduledIngestionService:
     was_called = False
     received_should_stop_callback = False
     received_max_workers = None
+    received_initial_article_threshold = None
+    received_initial_articles_per_source = None
 
     def run_scheduled_ingestion(self, **kwargs) -> ScheduledIngestionResult:
         """Вернуть готовый результат планового сбора."""
         type(self).was_called = True
         type(self).received_should_stop_callback = callable(kwargs.get("should_stop"))
         type(self).received_max_workers = kwargs.get("max_workers")
+        type(self).received_initial_article_threshold = kwargs.get("initial_article_threshold")
+        type(self).received_initial_articles_per_source = kwargs.get("initial_articles_per_source")
         return ScheduledIngestionResult(
             mode="initial",
             article_count_before=250,
@@ -182,6 +210,7 @@ def reset_ingestion_state() -> None:
         ingestion_controller._task_state.article_count_before = None
         ingestion_controller._task_state.should_stop = False
         ingestion_controller._task_state.stopped = False
+        ingestion_controller._task_state.run_kind = "scheduled"
 
 
 if __name__ == "__main__":
