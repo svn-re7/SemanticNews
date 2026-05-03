@@ -39,7 +39,23 @@ class TelegramAuthServiceTest(unittest.TestCase):
 
         self.assertEqual(result.status, "code_sent")
         self.assertEqual(FakeTelegramClient.last_phone, "+79990000000")
+        self.assertEqual(FakeTelegramClient.disconnect_count, 1)
         self.assertFalse(self.config_path.exists())
+
+    def test_request_code_creates_session_directory_before_telethon_client(self) -> None:
+        """Перед созданием Telethon-клиента сервис создает папку для SQLite session."""
+        missing_dir_session_path = self.runtime_dir / "missing" / "semanticnews.session"
+        service = TelegramAuthService(
+            config_path=self.config_path,
+            session_path=missing_dir_session_path,
+            client_factory=DirectoryCheckingTelegramClient,
+            password_error_class=FakePasswordRequired,
+        )
+
+        result = service.request_code(api_id="12345", api_hash="hash-value", phone="+79990000000")
+
+        self.assertEqual(result.status, "code_sent")
+        self.assertTrue(missing_dir_session_path.parent.exists())
 
     def test_confirm_code_saves_config_after_successful_authorization(self) -> None:
         """Успешное подтверждение кода сохраняет `api_id/api_hash` в локальный config."""
@@ -54,6 +70,7 @@ class TelegramAuthServiceTest(unittest.TestCase):
         result = service.confirm_code("11111")
 
         self.assertEqual(result.status, "authorized")
+        self.assertEqual(FakeTelegramClient.disconnect_count, 2)
         payload = json.loads(self.config_path.read_text(encoding="utf-8"))
         self.assertEqual(payload["api_id"], 12345)
         self.assertEqual(payload["api_hash"], "hash-value")
@@ -72,6 +89,7 @@ class TelegramAuthServiceTest(unittest.TestCase):
         result = service.confirm_code("11111")
 
         self.assertEqual(result.status, "password_required")
+        self.assertEqual(FakeTelegramClient.disconnect_count, 2)
         self.assertFalse(self.config_path.exists())
 
     def test_confirm_password_saves_config_after_two_factor_authorization(self) -> None:
@@ -90,6 +108,7 @@ class TelegramAuthServiceTest(unittest.TestCase):
 
         self.assertEqual(result.status, "authorized")
         self.assertEqual(FakeTelegramClient.last_password, "secret-password")
+        self.assertEqual(FakeTelegramClient.disconnect_count, 3)
         self.assertTrue(self.config_path.exists())
 
 
@@ -108,6 +127,7 @@ class FakeTelegramClient:
 
     last_phone: str | None = None
     last_password: str | None = None
+    disconnect_count = 0
     require_password = False
 
     def __init__(self, session_path: str, api_id: int, api_hash: str) -> None:
@@ -120,6 +140,7 @@ class FakeTelegramClient:
         """Сбросить состояние fake-клиента между тестами."""
         cls.last_phone = None
         cls.last_password = None
+        cls.disconnect_count = 0
         cls.require_password = False
 
     async def connect(self) -> None:
@@ -127,6 +148,7 @@ class FakeTelegramClient:
 
     async def disconnect(self) -> None:
         """Имитировать отключение от Telegram."""
+        type(self).disconnect_count += 1
 
     async def send_code_request(self, phone: str) -> FakeSentCode:
         """Запомнить телефон и вернуть fake-хеш кода."""
@@ -148,6 +170,15 @@ class FakeTelegramClient:
             return
         if type(self).require_password:
             raise FakePasswordRequired()
+
+
+class DirectoryCheckingTelegramClient(FakeTelegramClient):
+    """Fake-клиент, который падает, если папка session еще не создана."""
+
+    def __init__(self, session_path: str, api_id: int, api_hash: str) -> None:
+        if not Path(session_path).parent.exists():
+            raise RuntimeError("session directory does not exist")
+        super().__init__(session_path, api_id, api_hash)
 
 
 if __name__ == "__main__":

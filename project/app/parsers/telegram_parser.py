@@ -71,6 +71,8 @@ class TelegramChannelParser:
             return []
 
         config = self._read_config()
+        # Telethon session - SQLite-файл, поэтому папка session должна существовать заранее.
+        self.session_path.parent.mkdir(parents=True, exist_ok=True)
         client = self.client_factory(str(self.session_path), config["api_id"], config["api_hash"])
         self._run_client_call(client, "connect")
 
@@ -111,6 +113,7 @@ class TelegramChannelParser:
         except ImportError as error:
             raise RuntimeError("Библиотека Telethon не установлена.") from error
 
+        Path(session_path).parent.mkdir(parents=True, exist_ok=True)
         return TelegramClient(session_path, api_id, api_hash)
 
 
