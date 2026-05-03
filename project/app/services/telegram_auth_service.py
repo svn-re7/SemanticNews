@@ -10,7 +10,7 @@ from typing import Any, Callable
 from app.config import Config
 
 
-ClientFactory = Callable[[str, int, str], Any]
+ClientFactory = Callable[..., Any]
 
 
 @dataclass(slots=True)
@@ -47,6 +47,8 @@ class PendingTelegramAuth:
     phone: str
     # Хеш запроса кода, который Telethon требует при подтверждении.
     phone_code_hash: str | None
+    # Настройки proxy, через который Telethon должен подключаться к Telegram.
+    proxy: dict[str, Any] | None
 
 
 class TelegramAuthService:
@@ -77,7 +79,7 @@ class TelegramAuthService:
 
         try:
             config = self._read_config()
-            client = self._build_client(config["api_id"], config["api_hash"])
+            client = self._build_client(config["api_id"], config["api_hash"], config.get("proxy"))
             try:
                 is_authorized = self._run_client_call(client, "is_user_authorized")
             finally:
@@ -87,11 +89,27 @@ class TelegramAuthService:
 
         return TelegramAuthStatus(has_config=True, is_authorized=bool(is_authorized))
 
-    def request_code(self, *, api_id: str, api_hash: str, phone: str) -> TelegramAuthResult:
+    def request_code(
+        self,
+        *,
+        api_id: str,
+        api_hash: str,
+        phone: str,
+        proxy_enabled: str | None = None,
+        proxy_type: str = "",
+        proxy_host: str = "",
+        proxy_port: str = "",
+    ) -> TelegramAuthResult:
         """Отправить Telegram-код и сохранить данные во временном pending-состоянии."""
         normalized_api_id = self._normalize_api_id(api_id)
         normalized_api_hash = api_hash.strip()
         normalized_phone = phone.strip()
+        proxy = self._normalize_proxy_settings(
+            enabled=proxy_enabled is not None,
+            proxy_type=proxy_type,
+            host=proxy_host,
+            port=proxy_port,
+        )
 
         if not normalized_api_hash:
             raise ValueError("api_hash не должен быть пустым.")
@@ -99,7 +117,7 @@ class TelegramAuthService:
             raise ValueError("Телефон Telegram не должен быть пустым.")
 
         try:
-            client = self._build_client(normalized_api_id, normalized_api_hash)
+            client = self._build_client(normalized_api_id, normalized_api_hash, proxy)
             try:
                 sent_code = self._run_client_call(client, "send_code_request", normalized_phone)
             finally:
@@ -114,6 +132,7 @@ class TelegramAuthService:
             api_hash=normalized_api_hash,
             phone=normalized_phone,
             phone_code_hash=phone_code_hash,
+            proxy=proxy,
         )
         return TelegramAuthResult(status="code_sent", message="Код отправлен в Telegram.")
 
@@ -125,7 +144,7 @@ class TelegramAuthService:
             raise ValueError("Код подтверждения не должен быть пустым.")
 
         try:
-            client = self._build_client(pending.api_id, pending.api_hash)
+            client = self._build_client(pending.api_id, pending.api_hash, pending.proxy)
             try:
                 self._run_client_call(
                     client,
@@ -144,7 +163,7 @@ class TelegramAuthService:
         except Exception as error:
             return self._make_error_result(error)
 
-        self._write_config(api_id=pending.api_id, api_hash=pending.api_hash)
+        self._write_config(api_id=pending.api_id, api_hash=pending.api_hash, proxy=pending.proxy)
         type(self)._pending_auth = None
         return TelegramAuthResult(status="authorized", message="Telegram-авторизация сохранена.")
 
@@ -156,7 +175,7 @@ class TelegramAuthService:
             raise ValueError("Пароль двухфакторной защиты не должен быть пустым.")
 
         try:
-            client = self._build_client(pending.api_id, pending.api_hash)
+            client = self._build_client(pending.api_id, pending.api_hash, pending.proxy)
             try:
                 self._run_client_call(client, "sign_in", password=normalized_password)
             finally:
@@ -164,15 +183,15 @@ class TelegramAuthService:
         except Exception as error:
             return self._make_error_result(error)
 
-        self._write_config(api_id=pending.api_id, api_hash=pending.api_hash)
+        self._write_config(api_id=pending.api_id, api_hash=pending.api_hash, proxy=pending.proxy)
         type(self)._pending_auth = None
         return TelegramAuthResult(status="authorized", message="Telegram-авторизация сохранена.")
 
-    def _build_client(self, api_id: int, api_hash: str) -> Any:
+    def _build_client(self, api_id: int, api_hash: str, proxy: dict[str, Any] | None = None) -> Any:
         """Создать Telethon-клиент или тестовую подмену и подключить его."""
         # Telethon session хранится в SQLite-файле, поэтому папка должна существовать до создания клиента.
         self.session_path.parent.mkdir(parents=True, exist_ok=True)
-        client = self.client_factory(str(self.session_path), api_id, api_hash)
+        client = self.client_factory(str(self.session_path), api_id, api_hash, proxy=proxy)
         try:
             self._run_client_call(client, "connect")
         except Exception:
@@ -209,10 +228,10 @@ class TelegramAuthService:
         """Прочитать локальный Telegram config из instance."""
         return json.loads(self.config_path.read_text(encoding="utf-8"))
 
-    def _write_config(self, *, api_id: int, api_hash: str) -> None:
+    def _write_config(self, *, api_id: int, api_hash: str, proxy: dict[str, Any] | None = None) -> None:
         """Сохранить api_id/api_hash локально после успешной авторизации."""
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"api_id": api_id, "api_hash": api_hash}
+        payload = {"api_id": api_id, "api_hash": api_hash, "proxy": proxy}
         self.config_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -231,7 +250,47 @@ class TelegramAuthService:
         except ValueError as error:
             raise ValueError("api_id должен быть числом.") from error
 
-    def _create_telethon_client(self, session_path: str, api_id: int, api_hash: str) -> Any:
+    def _normalize_proxy_settings(
+        self,
+        *,
+        enabled: bool,
+        proxy_type: str,
+        host: str,
+        port: str,
+    ) -> dict[str, Any] | None:
+        """Проверить proxy-настройки формы и привести их к формату config."""
+        if not enabled:
+            return None
+
+        normalized_type = proxy_type.strip().lower() or "socks5"
+        normalized_host = host.strip()
+        if normalized_type not in {"socks5", "http"}:
+            raise ValueError("Тип proxy должен быть socks5 или http.")
+        if not normalized_host:
+            raise ValueError("Host proxy не должен быть пустым.")
+
+        try:
+            normalized_port = int(port)
+        except ValueError as error:
+            raise ValueError("Port proxy должен быть числом.") from error
+
+        if not 1 <= normalized_port <= 65535:
+            raise ValueError("Port proxy должен быть в диапазоне от 1 до 65535.")
+
+        return {
+            "type": normalized_type,
+            "host": normalized_host,
+            "port": normalized_port,
+        }
+
+    def _create_telethon_client(
+        self,
+        session_path: str,
+        api_id: int,
+        api_hash: str,
+        *,
+        proxy: dict[str, Any] | None = None,
+    ) -> Any:
         """Создать настоящий TelethonClient лениво, чтобы тесты не требовали Telethon."""
         try:
             from telethon import TelegramClient
@@ -239,7 +298,21 @@ class TelegramAuthService:
             raise RuntimeError("Библиотека Telethon не установлена.") from error
 
         Path(session_path).parent.mkdir(parents=True, exist_ok=True)
-        return TelegramClient(session_path, api_id, api_hash)
+        return TelegramClient(session_path, api_id, api_hash, proxy=self._build_telethon_proxy(proxy))
+
+    def _build_telethon_proxy(self, proxy: dict[str, Any] | None) -> tuple[Any, str, int, bool] | None:
+        """Преобразовать наш JSON-config proxy в tuple, который ожидает Telethon/PySocks."""
+        if not proxy:
+            return None
+
+        try:
+            import socks
+        except ImportError as error:
+            raise RuntimeError("Для Telegram proxy нужно установить зависимость PySocks.") from error
+
+        proxy_type = socks.SOCKS5 if proxy["type"] == "socks5" else socks.HTTP
+        # True включает удаленное разрешение DNS через proxy; для mixed/socks5 это безопаснее.
+        return (proxy_type, proxy["host"], int(proxy["port"]), True)
 
     def _load_password_error_class(self) -> type[Exception]:
         """Получить класс ошибки 2FA от Telethon или fallback для понятной ошибки."""

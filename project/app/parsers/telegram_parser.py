@@ -11,7 +11,7 @@ from app.config import Config
 from app.parsers.parser_models import ExtractedArticle
 
 
-ClientFactory = Callable[[str, int, str], Any]
+ClientFactory = Callable[..., Any]
 
 
 def normalize_telegram_message(channel: str, message: Any) -> ExtractedArticle | None:
@@ -73,7 +73,7 @@ class TelegramChannelParser:
         config = self._read_config()
         # Telethon session - SQLite-файл, поэтому папка session должна существовать заранее.
         self.session_path.parent.mkdir(parents=True, exist_ok=True)
-        client = self.client_factory(str(self.session_path), config["api_id"], config["api_hash"])
+        client = self.client_factory(str(self.session_path), config["api_id"], config["api_hash"], proxy=config.get("proxy"))
         self._run_client_call(client, "connect")
 
         try:
@@ -106,7 +106,14 @@ class TelegramChannelParser:
             return asyncio.run(result)
         return result
 
-    def _create_telethon_client(self, session_path: str, api_id: int, api_hash: str) -> Any:
+    def _create_telethon_client(
+        self,
+        session_path: str,
+        api_id: int,
+        api_hash: str,
+        *,
+        proxy: dict[str, Any] | None = None,
+    ) -> Any:
         """Создать настоящий TelethonClient лениво, чтобы тесты не требовали Telethon."""
         try:
             from telethon import TelegramClient
@@ -114,7 +121,21 @@ class TelegramChannelParser:
             raise RuntimeError("Библиотека Telethon не установлена.") from error
 
         Path(session_path).parent.mkdir(parents=True, exist_ok=True)
-        return TelegramClient(session_path, api_id, api_hash)
+        return TelegramClient(session_path, api_id, api_hash, proxy=self._build_telethon_proxy(proxy))
+
+    def _build_telethon_proxy(self, proxy: dict[str, Any] | None) -> tuple[Any, str, int, bool] | None:
+        """Преобразовать сохраненный Telegram proxy-config в tuple для Telethon/PySocks."""
+        if not proxy:
+            return None
+
+        try:
+            import socks
+        except ImportError as error:
+            raise RuntimeError("Для Telegram proxy нужно установить зависимость PySocks.") from error
+
+        proxy_type = socks.SOCKS5 if proxy["type"] == "socks5" else socks.HTTP
+        # DNS лучше отдавать proxy, чтобы прямой сетевой путь к Telegram не использовался.
+        return (proxy_type, proxy["host"], int(proxy["port"]), True)
 
 
 async def _collect_async_generator(async_generator: Any) -> list[Any]:

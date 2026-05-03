@@ -42,11 +42,18 @@ class TelegramControllerTest(unittest.TestCase):
                     "api_id": "12345",
                     "api_hash": "hash-value",
                     "phone": "+79990000000",
+                    "proxy_enabled": "1",
+                    "proxy_type": "socks5",
+                    "proxy_host": "127.0.0.1",
+                    "proxy_port": "2080",
                 },
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(fake_service.requested_code, ("12345", "hash-value", "+79990000000"))
+        self.assertEqual(
+            fake_service.requested_code,
+            ("12345", "hash-value", "+79990000000", "1", "socks5", "127.0.0.1", "2080"),
+        )
         self.assertIn("Код отправлен", response.text)
 
     def test_confirm_code_posts_code_to_service(self) -> None:
@@ -82,16 +89,26 @@ class FakeTelegramAuthService:
     """Подменный сервис Telegram-авторизации для тестов контроллера."""
 
     def __init__(self) -> None:
-        self.requested_code: tuple[str, str, str] | None = None
+        self.requested_code: tuple[str, str, str, str | None, str, str, str] | None = None
         self.confirmed_code: str | None = None
 
     def get_status(self) -> FakeStatus:
         """Вернуть fake-статус без подключения к Telegram."""
         return FakeStatus()
 
-    def request_code(self, *, api_id: str, api_hash: str, phone: str) -> FakeAuthResult:
+    def request_code(
+        self,
+        *,
+        api_id: str,
+        api_hash: str,
+        phone: str,
+        proxy_enabled: str | None = None,
+        proxy_type: str = "",
+        proxy_host: str = "",
+        proxy_port: str = "",
+    ) -> FakeAuthResult:
         """Запомнить данные запроса кода."""
-        self.requested_code = (api_id, api_hash, phone)
+        self.requested_code = (api_id, api_hash, phone, proxy_enabled, proxy_type, proxy_host, proxy_port)
         return FakeAuthResult(status="code_sent", message="Код отправлен в Telegram.")
 
     def confirm_code(self, code: str) -> FakeAuthResult:

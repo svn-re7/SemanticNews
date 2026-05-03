@@ -23,6 +23,10 @@ def request_telegram_code():
             api_id=request.form.get("api_id", ""),
             api_hash=request.form.get("api_hash", ""),
             phone=request.form.get("phone", ""),
+            proxy_enabled=request.form.get("proxy_enabled"),
+            proxy_type=request.form.get("proxy_type", ""),
+            proxy_host=request.form.get("proxy_host", ""),
+            proxy_port=request.form.get("proxy_port", ""),
         )
     except ValueError as error:
         return _render_auth_page(error_message=str(error)), 400

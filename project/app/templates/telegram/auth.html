@@ -49,6 +49,34 @@
         <p class="text-muted small mt-3 mb-0">
             `api_id` и `api_hash` берутся на my.telegram.org. Они сохраняются только локально в папке instance.
         </p>
+        <div class="border rounded p-3 mt-3">
+            <div class="form-check mb-3">
+                <input class="form-check-input" id="proxy-enabled" name="proxy_enabled" type="checkbox" value="1" checked>
+                <label class="form-check-label" for="proxy-enabled">
+                    Использовать proxy для подключения к Telegram
+                </label>
+            </div>
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label" for="proxy-type">Тип proxy</label>
+                    <select class="form-select" id="proxy-type" name="proxy_type">
+                        <option value="socks5" selected>socks5</option>
+                        <option value="http">http</option>
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label" for="proxy-host">Host</label>
+                    <input class="form-control" id="proxy-host" name="proxy_host" value="127.0.0.1">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="proxy-port">Port</label>
+                    <input class="form-control" id="proxy-port" name="proxy_port" value="2080">
+                </div>
+            </div>
+            <p class="text-muted small mt-2 mb-0">
+                Эти значения взяты из системного proxy Windows. Если VPN использует другой порт, замените host/port.
+            </p>
+        </div>
         <div class="mt-3">
             <button class="btn btn-primary" type="submit">Отправить код</button>
         </div>

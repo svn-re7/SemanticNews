@@ -35,10 +35,22 @@ class TelegramAuthServiceTest(unittest.TestCase):
             password_error_class=FakePasswordRequired,
         )
 
-        result = service.request_code(api_id="12345", api_hash="hash-value", phone="+79990000000")
+        result = service.request_code(
+            api_id="12345",
+            api_hash="hash-value",
+            phone="+79990000000",
+            proxy_enabled="1",
+            proxy_type="socks5",
+            proxy_host="127.0.0.1",
+            proxy_port="2080",
+        )
 
         self.assertEqual(result.status, "code_sent")
         self.assertEqual(FakeTelegramClient.last_phone, "+79990000000")
+        self.assertEqual(
+            FakeTelegramClient.last_proxy,
+            {"type": "socks5", "host": "127.0.0.1", "port": 2080},
+        )
         self.assertEqual(FakeTelegramClient.disconnect_count, 1)
         self.assertFalse(self.config_path.exists())
 
@@ -142,19 +154,22 @@ class FakeTelegramClient:
 
     last_phone: str | None = None
     last_password: str | None = None
+    last_proxy: dict | None = None
     disconnect_count = 0
     require_password = False
 
-    def __init__(self, session_path: str, api_id: int, api_hash: str) -> None:
+    def __init__(self, session_path: str, api_id: int, api_hash: str, *, proxy: dict | None = None) -> None:
         self.session_path = session_path
         self.api_id = api_id
         self.api_hash = api_hash
+        type(self).last_proxy = proxy
 
     @classmethod
     def reset(cls) -> None:
         """Сбросить состояние fake-клиента между тестами."""
         cls.last_phone = None
         cls.last_password = None
+        cls.last_proxy = None
         cls.disconnect_count = 0
         cls.require_password = False
 
@@ -190,10 +205,10 @@ class FakeTelegramClient:
 class DirectoryCheckingTelegramClient(FakeTelegramClient):
     """Fake-клиент, который падает, если папка session еще не создана."""
 
-    def __init__(self, session_path: str, api_id: int, api_hash: str) -> None:
+    def __init__(self, session_path: str, api_id: int, api_hash: str, *, proxy: dict | None = None) -> None:
         if not Path(session_path).parent.exists():
             raise RuntimeError("session directory does not exist")
-        super().__init__(session_path, api_id, api_hash)
+        super().__init__(session_path, api_id, api_hash, proxy=proxy)
 
 
 class ConnectionFailingTelegramClient(FakeTelegramClient):

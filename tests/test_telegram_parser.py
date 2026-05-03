@@ -47,7 +47,13 @@ class TelegramParserTest(unittest.TestCase):
             config_path = Path(temp_dir) / "config.json"
             session_path = Path(temp_dir) / "semanticnews.session"
             config_path.write_text(
-                json.dumps({"api_id": 12345, "api_hash": "hash-value"}),
+                json.dumps(
+                    {
+                        "api_id": 12345,
+                        "api_hash": "hash-value",
+                        "proxy": {"type": "socks5", "host": "127.0.0.1", "port": 2080},
+                    }
+                ),
                 encoding="utf-8",
             )
             FakeTelegramClient.reset()
@@ -61,6 +67,7 @@ class TelegramParserTest(unittest.TestCase):
             articles = parser.collect(channel="@semantic_news", limit=2)
 
         self.assertTrue(FakeTelegramClient.was_connected)
+        self.assertEqual(FakeTelegramClient.last_proxy, {"type": "socks5", "host": "127.0.0.1", "port": 2080})
         self.assertEqual(len(articles), 1)
         self.assertEqual(articles[0].url, "https://t.me/semantic_news/42")
 
@@ -78,16 +85,19 @@ class FakeTelegramClient:
     """Подменный Telegram-клиент для проверки parser-а без сети."""
 
     was_connected = False
+    last_proxy: dict | None = None
 
     @classmethod
     def reset(cls) -> None:
         """Сбросить состояние fake-клиента перед тестом."""
         cls.was_connected = False
+        cls.last_proxy = None
 
-    def __init__(self, session_path: str, api_id: int, api_hash: str) -> None:
+    def __init__(self, session_path: str, api_id: int, api_hash: str, *, proxy: dict | None = None) -> None:
         self.session_path = session_path
         self.api_id = api_id
         self.api_hash = api_hash
+        type(self).last_proxy = proxy
 
     async def connect(self) -> None:
         """Имитировать подключение к Telegram."""
