@@ -79,11 +79,12 @@ class TelegramAuthService:
 
         try:
             config = self._read_config()
-            client = self._build_client(config["api_id"], config["api_hash"], config.get("proxy"))
-            try:
-                is_authorized = self._run_client_call(client, "is_user_authorized")
-            finally:
-                self._disconnect_client(client)
+            is_authorized = self._run_connected_client_call(
+                config["api_id"],
+                config["api_hash"],
+                config.get("proxy"),
+                "is_user_authorized",
+            )
         except Exception as error:
             return TelegramAuthStatus(has_config=True, is_authorized=False, error=str(error))
 
@@ -117,11 +118,13 @@ class TelegramAuthService:
             raise ValueError("Телефон Telegram не должен быть пустым.")
 
         try:
-            client = self._build_client(normalized_api_id, normalized_api_hash, proxy)
-            try:
-                sent_code = self._run_client_call(client, "send_code_request", normalized_phone)
-            finally:
-                self._disconnect_client(client)
+            sent_code = self._run_connected_client_call(
+                normalized_api_id,
+                normalized_api_hash,
+                proxy,
+                "send_code_request",
+                normalized_phone,
+            )
         except Exception as error:
             return self._make_error_result(error)
         phone_code_hash = getattr(sent_code, "phone_code_hash", None)
@@ -144,22 +147,20 @@ class TelegramAuthService:
             raise ValueError("Код подтверждения не должен быть пустым.")
 
         try:
-            client = self._build_client(pending.api_id, pending.api_hash, pending.proxy)
-            try:
-                self._run_client_call(
-                    client,
-                    "sign_in",
-                    phone=pending.phone,
-                    code=normalized_code,
-                    phone_code_hash=pending.phone_code_hash,
-                )
-            except self.password_error_class:
-                return TelegramAuthResult(
-                    status="password_required",
-                    message="Telegram требует пароль двухфакторной защиты.",
-                )
-            finally:
-                self._disconnect_client(client)
+            self._run_connected_client_call(
+                pending.api_id,
+                pending.api_hash,
+                pending.proxy,
+                "sign_in",
+                phone=pending.phone,
+                code=normalized_code,
+                phone_code_hash=pending.phone_code_hash,
+            )
+        except self.password_error_class:
+            return TelegramAuthResult(
+                status="password_required",
+                message="Telegram требует пароль двухфакторной защиты.",
+            )
         except Exception as error:
             return self._make_error_result(error)
 
@@ -175,11 +176,13 @@ class TelegramAuthService:
             raise ValueError("Пароль двухфакторной защиты не должен быть пустым.")
 
         try:
-            client = self._build_client(pending.api_id, pending.api_hash, pending.proxy)
-            try:
-                self._run_client_call(client, "sign_in", password=normalized_password)
-            finally:
-                self._disconnect_client(client)
+            self._run_connected_client_call(
+                pending.api_id,
+                pending.api_hash,
+                pending.proxy,
+                "sign_in",
+                password=normalized_password,
+            )
         except Exception as error:
             return self._make_error_result(error)
 
@@ -187,21 +190,56 @@ class TelegramAuthService:
         type(self)._pending_auth = None
         return TelegramAuthResult(status="authorized", message="Telegram-авторизация сохранена.")
 
-    def _build_client(self, api_id: int, api_hash: str, proxy: dict[str, Any] | None = None) -> Any:
-        """Создать Telethon-клиент или тестовую подмену и подключить его."""
+    def _run_connected_client_call(
+        self,
+        api_id: int,
+        api_hash: str,
+        proxy: dict[str, Any] | None,
+        method_name: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Выполнить один Telethon-сценарий внутри одного asyncio event loop."""
+        return asyncio.run(
+            self._run_connected_client_call_async(api_id, api_hash, proxy, method_name, *args, **kwargs)
+        )
+
+    async def _run_connected_client_call_async(
+        self,
+        api_id: int,
+        api_hash: str,
+        proxy: dict[str, Any] | None,
+        method_name: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Создать клиента, подключиться, выполнить метод и закрыть соединение в одном event loop."""
         # Telethon session хранится в SQLite-файле, поэтому папка должна существовать до создания клиента.
         self.session_path.parent.mkdir(parents=True, exist_ok=True)
         client = self.client_factory(str(self.session_path), api_id, api_hash, proxy=proxy)
         try:
-            self._run_client_call(client, "connect")
-        except Exception:
-            # Если connect упал, клиент все равно мог открыть session-файл или сокет.
-            self._disconnect_client(client)
-            raise
-        return client
+            await self._resolve_client_result(client.connect())
+            method = getattr(client, method_name)
+            return await self._resolve_client_result(method(*args, **kwargs))
+        finally:
+            # Даже если Telegram-метод упал, socket/session нужно закрыть в том же event loop.
+            if hasattr(client, "disconnect"):
+                try:
+                    await self._resolve_client_result(client.disconnect())
+                except Exception:
+                    # Ошибка закрытия не должна маскировать исходную ошибку Telegram-подключения.
+                    pass
+
+    async def _resolve_client_result(self, result: Any) -> Any:
+        """Дождаться coroutine или async-generator Telethon без смены event loop."""
+        if inspect.isasyncgen(result) or hasattr(result, "__aiter__"):
+            return [item async for item in result]
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
     def _run_client_call(self, client: Any, method_name: str, *args: Any, **kwargs: Any) -> Any:
-        """Вызвать sync/async метод клиента и корректно закрыть coroutine."""
+        """Вызвать sync/async метод клиента для тестовых сценариев без подключенного Telethon."""
         method = getattr(client, method_name)
         result = method(*args, **kwargs)
         if inspect.isawaitable(result):

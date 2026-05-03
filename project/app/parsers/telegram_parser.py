@@ -70,14 +70,18 @@ class TelegramChannelParser:
         if limit <= 0:
             return []
 
+        return asyncio.run(self._collect_async(channel=channel, limit=limit))
+
+    async def _collect_async(self, *, channel: str, limit: int) -> list[ExtractedArticle]:
+        """Прочитать Telegram-канал внутри одного asyncio event loop."""
         config = self._read_config()
         # Telethon session - SQLite-файл, поэтому папка session должна существовать заранее.
         self.session_path.parent.mkdir(parents=True, exist_ok=True)
         client = self.client_factory(str(self.session_path), config["api_id"], config["api_hash"], proxy=config.get("proxy"))
-        self._run_client_call(client, "connect")
 
         try:
-            messages = self._run_client_call(client, "iter_messages", _normalize_channel(channel), limit=limit)
+            await self._resolve_client_result(client.connect())
+            messages = await self._resolve_client_result(client.iter_messages(_normalize_channel(channel), limit=limit))
 
             articles: list[ExtractedArticle] = []
             for message in messages:
@@ -88,7 +92,7 @@ class TelegramChannelParser:
         finally:
             # Даже в локальном desktop-приложении сетевое соединение лучше закрывать явно.
             if hasattr(client, "disconnect"):
-                self._run_client_call(client, "disconnect")
+                await self._resolve_client_result(client.disconnect())
 
     def _read_config(self) -> dict[str, Any]:
         """Прочитать локальный Telegram config с api_id/api_hash."""
@@ -104,6 +108,14 @@ class TelegramChannelParser:
             return asyncio.run(_collect_async_generator(result))
         if inspect.isawaitable(result):
             return asyncio.run(result)
+        return result
+
+    async def _resolve_client_result(self, result: Any) -> Any:
+        """Дождаться coroutine или async-generator Telethon в текущем event loop."""
+        if inspect.isasyncgen(result) or hasattr(result, "__aiter__"):
+            return [item async for item in result]
+        if inspect.isawaitable(result):
+            return await result
         return result
 
     def _create_telethon_client(

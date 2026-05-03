@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import sys
 import tempfile
 import unittest
@@ -83,6 +84,19 @@ class TelegramAuthServiceTest(unittest.TestCase):
         self.assertEqual(result.status, "error")
         self.assertIn("Telegram", result.message)
         self.assertFalse(self.config_path.exists())
+
+    def test_request_code_uses_one_event_loop_for_connect_and_send(self) -> None:
+        """Telethon-клиент нельзя переносить между event loop после подключения."""
+        service = TelegramAuthService(
+            config_path=self.config_path,
+            session_path=self.session_path,
+            client_factory=LoopBoundTelegramClient,
+            password_error_class=FakePasswordRequired,
+        )
+
+        result = service.request_code(api_id="12345", api_hash="hash-value", phone="+79990000000")
+
+        self.assertEqual(result.status, "code_sent")
 
     def test_build_telethon_proxy_uses_python_socks_format(self) -> None:
         """Proxy для настоящего Telethon-клиента собирается в dict-формат python-socks."""
@@ -232,6 +246,22 @@ class ConnectionFailingTelegramClient(FakeTelegramClient):
 
     async def connect(self) -> None:
         raise ConnectionError("Connection to Telegram failed 5 time(s)")
+
+
+class LoopBoundTelegramClient(FakeTelegramClient):
+    """Fake-клиент, который падает при смене asyncio event loop после connect."""
+
+    def __init__(self, session_path: str, api_id: int, api_hash: str, *, proxy: dict | None = None) -> None:
+        super().__init__(session_path, api_id, api_hash, proxy=proxy)
+        self.connected_loop = None
+
+    async def connect(self) -> None:
+        self.connected_loop = asyncio.get_running_loop()
+
+    async def send_code_request(self, phone: str) -> FakeSentCode:
+        if asyncio.get_running_loop() is not self.connected_loop:
+            raise RuntimeError("The asyncio event loop must not change after connection")
+        return await super().send_code_request(phone)
 
 
 if __name__ == "__main__":
