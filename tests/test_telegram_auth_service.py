@@ -84,6 +84,22 @@ class TelegramAuthServiceTest(unittest.TestCase):
         self.assertIn("Telegram", result.message)
         self.assertFalse(self.config_path.exists())
 
+    def test_build_telethon_proxy_uses_python_socks_format(self) -> None:
+        """Proxy для настоящего Telethon-клиента собирается в dict-формат python-socks."""
+        service = TelegramAuthService(
+            config_path=self.config_path,
+            session_path=self.session_path,
+            client_factory=FakeTelegramClient,
+            password_error_class=FakePasswordRequired,
+        )
+
+        proxy = service._build_telethon_proxy({"type": "socks5", "host": "127.0.0.1", "port": 2080})
+
+        self.assertEqual(
+            proxy,
+            {"proxy_type": "socks5", "addr": "127.0.0.1", "port": 2080, "rdns": True},
+        )
+
     def test_confirm_code_saves_config_after_successful_authorization(self) -> None:
         """Успешное подтверждение кода сохраняет `api_id/api_hash` в локальный config."""
         service = TelegramAuthService(

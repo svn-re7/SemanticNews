@@ -300,19 +300,23 @@ class TelegramAuthService:
         Path(session_path).parent.mkdir(parents=True, exist_ok=True)
         return TelegramClient(session_path, api_id, api_hash, proxy=self._build_telethon_proxy(proxy))
 
-    def _build_telethon_proxy(self, proxy: dict[str, Any] | None) -> tuple[Any, str, int, bool] | None:
-        """Преобразовать наш JSON-config proxy в tuple, который ожидает Telethon/PySocks."""
+    def _build_telethon_proxy(self, proxy: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Преобразовать наш JSON-config proxy в dict-формат, который ожидает Telethon."""
         if not proxy:
             return None
 
         try:
-            import socks
+            import python_socks  # noqa: F401
         except ImportError as error:
-            raise RuntimeError("Для Telegram proxy нужно установить зависимость PySocks.") from error
+            raise RuntimeError("Для Telegram proxy нужно установить зависимость python-socks.") from error
 
-        proxy_type = socks.SOCKS5 if proxy["type"] == "socks5" else socks.HTTP
-        # True включает удаленное разрешение DNS через proxy; для mixed/socks5 это безопаснее.
-        return (proxy_type, proxy["host"], int(proxy["port"]), True)
+        return {
+            "proxy_type": proxy["type"],
+            "addr": proxy["host"],
+            "port": int(proxy["port"]),
+            # DNS лучше отдавать proxy, чтобы прямой сетевой путь к Telegram не использовался.
+            "rdns": True,
+        }
 
     def _load_password_error_class(self) -> type[Exception]:
         """Получить класс ошибки 2FA от Telethon или fallback для понятной ошибки."""
