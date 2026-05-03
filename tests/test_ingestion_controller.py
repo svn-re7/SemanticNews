@@ -32,6 +32,12 @@ class IngestionControllerTest(unittest.TestCase):
         self.assertIn("/ingestion/start-full", response.text)
         self.assertIn("/ingestion/stop", response.text)
         self.assertIn("ingestion-results-table", response.text)
+        self.assertIn("Источник", response.text)
+        self.assertIn("Сохранено", response.text)
+        self.assertIn("Найдено", response.text)
+        self.assertNotIn("В FAISS", response.text)
+        self.assertNotIn("Дубли", response.text)
+        self.assertNotIn("Пропущено", response.text)
 
     def test_ingestion_status_endpoint_returns_json(self) -> None:
         """Endpoint статуса ingestion возвращает JSON для polling из UI."""

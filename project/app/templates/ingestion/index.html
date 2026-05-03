@@ -49,11 +49,8 @@
                 <thead>
                     <tr>
                         <th>Источник</th>
-                        <th class="text-end">Найдено</th>
                         <th class="text-end">Сохранено</th>
-                        <th class="text-end">В FAISS</th>
-                        <th class="text-end">Дубли</th>
-                        <th class="text-end">Пропущено</th>
+                        <th class="text-end">Найдено</th>
                     </tr>
                 </thead>
                 <tbody id="ingestion-results-body"></tbody>
@@ -97,17 +94,11 @@
 
         resultsCard.classList.remove("d-none");
         for (const result of results) {
-            const skipped = result.skipped_empty_text
-                + result.skipped_low_quality_text
-                + result.skipped_missing_type;
             const row = document.createElement("tr");
 
             appendCell(row, result.source_name || result.source_base_url || `Источник ${result.source_id}`);
-            appendCell(row, result.found, "text-end");
             appendCell(row, result.saved, "text-end");
-            appendCell(row, result.indexed, "text-end");
-            appendCell(row, result.skipped_duplicates, "text-end");
-            appendCell(row, skipped, "text-end");
+            appendCell(row, result.found, "text-end");
 
             resultsBody.appendChild(row);
         }
