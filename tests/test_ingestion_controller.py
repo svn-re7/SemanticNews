@@ -87,6 +87,32 @@ class IngestionControllerTest(unittest.TestCase):
         self.assertEqual(payload["results"][0]["saved"], 2)
         self.assertIn("skipped_low_quality_text", payload["results"][0])
 
+    def test_status_resolves_source_name_from_repository(self) -> None:
+        """Статус ingestion берет имя источника из БД, если результат хранит только source_id."""
+        original_repository = getattr(ingestion_controller, "SourceRepository", None)
+
+        try:
+            ingestion_controller.SourceRepository = FakeSourceRepository
+            with ingestion_controller._task_lock:
+                ingestion_controller._task_state.results = [
+                    IngestionResult(
+                        source_id=5,
+                        source_base_url="https://example.test/sitemap.xml",
+                        found=3,
+                        saved=1,
+                    )
+                ]
+
+            payload = ingestion_controller._serialize_state()
+        finally:
+            if original_repository is None:
+                delattr(ingestion_controller, "SourceRepository")
+            else:
+                ingestion_controller.SourceRepository = original_repository
+            reset_ingestion_state()
+
+        self.assertEqual(payload["results"][0]["source_name"], "Название из БД")
+
     def test_full_background_task_forces_initial_ingestion(self) -> None:
         """Полный сбор запускает initial-режим независимо от текущего размера базы."""
         original_service = ingestion_controller.IngestionService
@@ -190,6 +216,21 @@ class FakeAutoStartIngestionService:
     def should_run_auto_ingestion(self) -> bool:
         """Вернуть заранее заданное решение об автообновлении."""
         return type(self).should_run
+
+
+class FakeSource:
+    """Минимальный объект источника для проверки сериализации статуса."""
+
+    id = 5
+    name = "Название из БД"
+
+
+class FakeSourceRepository:
+    """Подменный репозиторий источников без обращения к SQLite."""
+
+    def list_sources(self, *, only_active: bool = False) -> list[FakeSource]:
+        """Вернуть источник с именем, как будто он прочитан из БД."""
+        return [FakeSource()]
 
 
 class FakeThread:

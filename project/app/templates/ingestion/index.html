@@ -96,7 +96,7 @@
         for (const result of results) {
             const row = document.createElement("tr");
 
-            appendCell(row, result.source_name || result.source_base_url || `Источник ${result.source_id}`);
+            appendCell(row, result.source_name || result.source_base_url || "Без названия");
             appendCell(row, result.saved, "text-end");
             appendCell(row, result.found, "text-end");
 

@@ -6,6 +6,7 @@ from threading import Lock, Thread
 
 from flask import Blueprint, jsonify, render_template
 
+from app.repositories.source_repository import SourceRepository
 from app.services.ingestion_service import IngestionResult, IngestionService
 
 
@@ -174,37 +175,74 @@ def _should_stop_requested() -> bool:
 def _serialize_state(*, started: bool | None = None) -> dict:
     """Подготовить статус ingestion к JSON-ответу."""
     with _task_lock:
-        payload = {
-            "is_running": _task_state.is_running,
-            "started_at": _format_datetime(_task_state.started_at),
-            "finished_at": _format_datetime(_task_state.finished_at),
-            "message": _task_state.message,
-            "error": _task_state.error,
-            "mode": _task_state.mode,
-            "article_count_before": _task_state.article_count_before,
-            "should_stop": _task_state.should_stop,
-            "stopped": _task_state.stopped,
-            "run_kind": _task_state.run_kind,
-            "results": [
-                {
-                    "source_id": result.source_id,
-                    "source_name": result.source_name or result.source_base_url,
-                    "source_base_url": result.source_base_url,
-                    "found": result.found,
-                    "saved": result.saved,
-                    "indexed": result.indexed,
-                    "skipped_duplicates": result.skipped_duplicates,
-                    "skipped_empty_text": result.skipped_empty_text,
-                    "skipped_low_quality_text": result.skipped_low_quality_text,
-                    "skipped_missing_type": result.skipped_missing_type,
-                }
-                for result in _task_state.results
-            ],
-        }
+        # Под lock только копируем in-memory статус, чтобы не держать его во время чтения SQLite.
+        results = list(_task_state.results)
+        is_running = _task_state.is_running
+        started_at = _task_state.started_at
+        finished_at = _task_state.finished_at
+        message = _task_state.message
+        error = _task_state.error
+        mode = _task_state.mode
+        article_count_before = _task_state.article_count_before
+        should_stop = _task_state.should_stop
+        stopped = _task_state.stopped
+        run_kind = _task_state.run_kind
+
+    source_names = _source_names_by_id(results)
+    payload = {
+        "is_running": is_running,
+        "started_at": _format_datetime(started_at),
+        "finished_at": _format_datetime(finished_at),
+        "message": message,
+        "error": error,
+        "mode": mode,
+        "article_count_before": article_count_before,
+        "should_stop": should_stop,
+        "stopped": stopped,
+        "run_kind": run_kind,
+        "results": [
+            _serialize_result(result, source_names)
+            for result in results
+        ],
+    }
 
     if started is not None:
         payload["started"] = started
     return payload
+
+
+def _source_names_by_id(results: list[IngestionResult]) -> dict[int, str]:
+    """Прочитать имена источников из БД для отображения итогов сбора."""
+    source_ids = {result.source_id for result in results}
+    if not source_ids:
+        return {}
+
+    # Контроллер не ходит в ORM напрямую: имена берутся через repository-слой.
+    return {
+        source.id: source.name
+        for source in SourceRepository().list_sources()
+        if source.id in source_ids
+    }
+
+
+def _serialize_result(result: IngestionResult, source_names: dict[int, str]) -> dict:
+    """Подготовить один результат ingestion к JSON-ответу."""
+    return {
+        "source_id": result.source_id,
+        "source_name": (
+            source_names.get(result.source_id)
+            or result.source_name
+            or result.source_base_url
+        ),
+        "source_base_url": result.source_base_url,
+        "found": result.found,
+        "saved": result.saved,
+        "indexed": result.indexed,
+        "skipped_duplicates": result.skipped_duplicates,
+        "skipped_empty_text": result.skipped_empty_text,
+        "skipped_low_quality_text": result.skipped_low_quality_text,
+        "skipped_missing_type": result.skipped_missing_type,
+    }
 
 
 def _format_datetime(value: datetime | None) -> str | None:
