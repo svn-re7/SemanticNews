@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 
@@ -154,7 +154,7 @@ class IngestionServiceTest(unittest.TestCase):
 
     def test_ingest_source_uses_telegram_parser_for_telegram_channel(self) -> None:
         """Telegram-источник собирается через Telegram parser, а не через sitemap/html parser."""
-        telegram_calls: list[tuple[str, int]] = []
+        telegram_calls: list[tuple[str, int, datetime | None]] = []
         source = build_fake_source(
             base_url="https://t.me/semantic_news",
             source_type_code="telegram_channel",
@@ -175,8 +175,32 @@ class IngestionServiceTest(unittest.TestCase):
 
         self.assertEqual(result.found, 1)
         self.assertEqual(result.saved, 1)
-        self.assertEqual(telegram_calls, [("https://t.me/semantic_news", 1)])
+        self.assertEqual(telegram_calls, [("https://t.me/semantic_news", 1, datetime(2026, 4, 29, 22, 49, 20))])
         self.assertEqual(news_repository.created_article_data[0].direct_url, "https://t.me/semantic_news/42")
+
+    def test_ingest_source_normalizes_aware_telegram_dates_before_checkpoint(self) -> None:
+        """Aware-даты Telegram приводятся к naive UTC перед сравнением с last_indexed_at."""
+        source = build_fake_source(
+            base_url="https://t.me/semantic_news",
+            source_type_code="telegram_channel",
+        )
+        news_repository = FakeNewsRepository(created_ids=[301])
+
+        service = IngestionService(
+            source_repository=FakeSourceRepository(source),
+            news_repository=news_repository,
+            article_type_repository=FakeArticleTypeRepository(),
+            indexing_service=FakeIndexingService(),
+            logging_service=FakeLoggingService(),
+            sitemap_batch_parser=failing_sitemap_batch_parser,
+            telegram_parser=fake_aware_telegram_parser,
+        )
+
+        result = service.ingest_source(source, max_articles=1)
+
+        self.assertEqual(result.saved, 1)
+        self.assertEqual(news_repository.created_article_data[0].published_at, datetime(2026, 5, 1, 12, 30))
+        self.assertEqual(source.last_indexed_at, datetime(2026, 5, 1, 12, 30))
 
     def test_ingest_source_logs_failed_event_when_parser_fails(self) -> None:
         """Если parser падает, ingestion пишет событие ingestion_failed и пробрасывает ошибку."""
@@ -545,15 +569,34 @@ def fake_source_aware_telegram_parser(channel: str, *args, **kwargs) -> list[Ext
     ]
 
 
-def build_fake_telegram_parser(calls: list[tuple[str, int]]):
+def build_fake_telegram_parser(calls: list[tuple[str, int, datetime | None]]):
     """Создать Telegram parser-заглушку, которая запоминает канал и limit."""
 
-    def fake_parser(channel: str, *, limit: int) -> list[ExtractedArticle]:
+    def fake_parser(
+        channel: str,
+        *,
+        limit: int,
+        stop_after_published_at: datetime | None = None,
+    ) -> list[ExtractedArticle]:
         """Вернуть один Telegram-пост без обращения к Telegram API."""
-        calls.append((channel, limit))
+        calls.append((channel, limit, stop_after_published_at))
         return fake_source_aware_telegram_parser(channel, limit=limit)
 
     return fake_parser
+
+
+def fake_aware_telegram_parser(*args, **kwargs) -> list[ExtractedArticle]:
+    """Вернуть Telegram-пост с timezone-aware датой, как это делает Telethon."""
+    text = " ".join(["Содержательный текст Telegram-поста."] * 20)
+    return [
+        ExtractedArticle(
+            url="https://t.me/semantic_news/99",
+            title="Telegram-пост",
+            text=text,
+            published_at=datetime(2026, 5, 1, 12, 30, tzinfo=UTC),
+            article_type_code="telegram_post",
+        )
+    ]
 
 
 def fail_if_parallel_ingestion_is_used(*args, **kwargs):

@@ -55,6 +55,21 @@ class TelegramAuthServiceTest(unittest.TestCase):
         self.assertEqual(FakeTelegramClient.disconnect_count, 1)
         self.assertFalse(self.config_path.exists())
 
+    def test_get_status_does_not_create_client_when_session_file_is_missing(self) -> None:
+        """Если config есть, но session-файла нет, статус не открывает сетевое подключение."""
+        self.config_path.write_text(json.dumps({"api_id": 12345, "api_hash": "hash-value"}), encoding="utf-8")
+        service = TelegramAuthService(
+            config_path=self.config_path,
+            session_path=self.session_path,
+            client_factory=failing_client_factory,
+            password_error_class=FakePasswordRequired,
+        )
+
+        status = service.get_status()
+
+        self.assertTrue(status.has_config)
+        self.assertFalse(status.is_authorized)
+
     def test_request_code_creates_session_directory_before_telethon_client(self) -> None:
         """Перед созданием Telethon-клиента сервис создает папку для SQLite session."""
         missing_dir_session_path = self.runtime_dir / "missing" / "semanticnews.session"
@@ -246,6 +261,11 @@ class ConnectionFailingTelegramClient(FakeTelegramClient):
 
     async def connect(self) -> None:
         raise ConnectionError("Connection to Telegram failed 5 time(s)")
+
+
+def failing_client_factory(*args, **kwargs):
+    """Упасть, если тест неожиданно дошел до создания Telegram-клиента."""
+    raise AssertionError("Telegram client не должен создаваться")
 
 
 class LoopBoundTelegramClient(FakeTelegramClient):

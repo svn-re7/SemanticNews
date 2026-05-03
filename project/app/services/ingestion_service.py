@@ -5,7 +5,7 @@ from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from threading import Lock
 
 from sqlalchemy.exc import IntegrityError
@@ -426,7 +426,11 @@ class IngestionService:
         """Выбрать parser-сценарий по типу источника и вернуть статьи пачками."""
         if self._is_telegram_source(source):
             # Telegram читается через готовую Telethon session и не использует sitemap-настройки.
-            telegram_articles = self.telegram_parser(source.base_url, limit=max_articles)
+            telegram_articles = self.telegram_parser(
+                source.base_url,
+                limit=max_articles,
+                stop_after_published_at=stop_after_published_at,
+            )
             yield from self._split_articles_into_batches(telegram_articles, batch_size)
             return
 
@@ -469,7 +473,7 @@ class IngestionService:
             direct_url=extracted_article.url.strip(),
             title=(extracted_article.title or "").strip(),
             text=extracted_article.text.strip(),
-            published_at=extracted_article.published_at,
+            published_at=self._to_naive_utc(extracted_article.published_at),
             article_type_code=extracted_article.article_type_code,
         )
 
@@ -571,7 +575,7 @@ class IngestionService:
         # Для частичного сбора нельзя ставить datetime.now(): это скажет parser-у,
         # что источник полностью проверен до текущего момента, хотя пользователь мог нажать stop.
         processed_dates = [
-            extracted_article.published_at
+            self._to_naive_utc(extracted_article.published_at)
             for extracted_article in extracted_articles
             if extracted_article.published_at is not None
         ]
@@ -585,6 +589,14 @@ class IngestionService:
 
         self.source_repository.update_last_indexed_at(source.id, batch_checkpoint)
         source.last_indexed_at = batch_checkpoint
+
+    def _to_naive_utc(self, value: datetime | None) -> datetime | None:
+        """Привести aware datetime к naive UTC, чтобы SQLite-значения сравнивались безопасно."""
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value
+        return value.astimezone(UTC).replace(tzinfo=None)
 
     def _log_source_event(self, source_id: int, event_code: str) -> None:
         """Записать SourceLog под общим ingestion-lock, чтобы потоки не писали в SQLite одновременно."""

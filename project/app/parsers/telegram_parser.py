@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -22,7 +22,7 @@ def normalize_telegram_message(channel: str, message: Any) -> ExtractedArticle |
 
     title = _build_title(text)
     message_id = getattr(message, "id")
-    published_at = getattr(message, "date", None)
+    published_at = _to_naive_utc(getattr(message, "date", None))
 
     return ExtractedArticle(
         url=_build_message_url(channel, message_id),
@@ -37,6 +37,7 @@ def collect_extracted_articles_from_telegram_channel(
     channel: str,
     *,
     limit: int = 100,
+    stop_after_published_at: datetime | None = None,
     config_path: Path | None = None,
     session_path: Path | None = None,
     client_factory: ClientFactory | None = None,
@@ -47,7 +48,7 @@ def collect_extracted_articles_from_telegram_channel(
         session_path=session_path,
         client_factory=client_factory,
     )
-    return parser.collect(channel=channel, limit=limit)
+    return parser.collect(channel=channel, limit=limit, stop_after_published_at=stop_after_published_at)
 
 
 class TelegramChannelParser:
@@ -65,28 +66,53 @@ class TelegramChannelParser:
         self.session_path = session_path if session_path is not None else Config.TELEGRAM_SESSION_PATH
         self.client_factory = client_factory if client_factory is not None else self._create_telethon_client
 
-    def collect(self, *, channel: str, limit: int = 100) -> list[ExtractedArticle]:
+    def collect(
+        self,
+        *,
+        channel: str,
+        limit: int = 100,
+        stop_after_published_at: datetime | None = None,
+    ) -> list[ExtractedArticle]:
         """Прочитать последние сообщения канала и вернуть только содержательные посты."""
         if limit <= 0:
             return []
 
-        return asyncio.run(self._collect_async(channel=channel, limit=limit))
+        return asyncio.run(
+            self._collect_async(
+                channel=channel,
+                limit=limit,
+                stop_after_published_at=stop_after_published_at,
+            )
+        )
 
-    async def _collect_async(self, *, channel: str, limit: int) -> list[ExtractedArticle]:
+    async def _collect_async(
+        self,
+        *,
+        channel: str,
+        limit: int,
+        stop_after_published_at: datetime | None,
+    ) -> list[ExtractedArticle]:
         """Прочитать Telegram-канал внутри одного asyncio event loop."""
         config = self._read_config()
+        cutoff = _to_naive_utc(stop_after_published_at)
         # Telethon session - SQLite-файл, поэтому папка session должна существовать заранее.
         self.session_path.parent.mkdir(parents=True, exist_ok=True)
         client = self.client_factory(str(self.session_path), config["api_id"], config["api_hash"], proxy=config.get("proxy"))
 
         try:
             await self._resolve_client_result(client.connect())
-            messages = await self._resolve_client_result(client.iter_messages(_normalize_channel(channel), limit=limit))
+            is_authorized = await self._resolve_client_result(client.is_user_authorized())
+            if not is_authorized:
+                raise RuntimeError("Telegram session не авторизована. Сначала выполните авторизацию через UI.")
+            messages = client.iter_messages(_normalize_channel(channel), limit=limit)
 
             articles: list[ExtractedArticle] = []
-            for message in messages:
+            async for message in messages:
                 article = normalize_telegram_message(channel, message)
                 if article is not None:
+                    # Telegram отдает посты от новых к старым, поэтому по checkpoint можно остановиться сразу.
+                    if cutoff is not None and article.published_at is not None and article.published_at <= cutoff:
+                        break
                     articles.append(article)
             return articles
         finally:
@@ -163,6 +189,15 @@ def _extract_message_text(message: Any) -> str:
     """Достать текст Telegram-сообщения из распространенных полей Telethon."""
     raw_text = getattr(message, "text", None) or getattr(message, "message", None) or ""
     return str(raw_text).strip()
+
+
+def _to_naive_utc(value: datetime | None) -> datetime | None:
+    """Привести дату Telegram к naive UTC, как остальные даты в SQLite."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(UTC).replace(tzinfo=None)
 
 
 def _build_title(text: str) -> str:

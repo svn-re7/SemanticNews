@@ -76,6 +76,8 @@ class TelegramAuthService:
         """Проверить, есть ли config и авторизована ли локальная Telethon session."""
         if not self.config_path.exists():
             return TelegramAuthStatus(has_config=False, is_authorized=False)
+        if not self.session_path.exists():
+            return TelegramAuthStatus(has_config=True, is_authorized=False)
 
         try:
             config = self._read_config()
