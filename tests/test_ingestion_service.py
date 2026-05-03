@@ -9,7 +9,7 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parents[1] / "project"
 sys.path.insert(0, str(PROJECT_DIR))
 
-from app.models.entities import ArticleType, Source  # noqa: E402
+from app.models.entities import ArticleType, Source, SourceType  # noqa: E402
 from app.parsers import ExtractedArticle  # noqa: E402
 from app.services.ingestion_service import IngestionService  # noqa: E402
 
@@ -152,6 +152,32 @@ class IngestionServiceTest(unittest.TestCase):
 
         self.assertEqual(parser_kwargs["article_request_delay_seconds"], 1.25)
 
+    def test_ingest_source_uses_telegram_parser_for_telegram_channel(self) -> None:
+        """Telegram-источник собирается через Telegram parser, а не через sitemap/html parser."""
+        telegram_calls: list[tuple[str, int]] = []
+        source = build_fake_source(
+            base_url="https://t.me/semantic_news",
+            source_type_code="telegram_channel",
+        )
+        news_repository = FakeNewsRepository(created_ids=[301])
+
+        service = IngestionService(
+            source_repository=FakeSourceRepository(source),
+            news_repository=news_repository,
+            article_type_repository=FakeArticleTypeRepository(),
+            indexing_service=FakeIndexingService(),
+            logging_service=FakeLoggingService(),
+            sitemap_batch_parser=failing_sitemap_batch_parser,
+            telegram_parser=build_fake_telegram_parser(telegram_calls),
+        )
+
+        result = service.ingest_source(source, max_articles=1)
+
+        self.assertEqual(result.found, 1)
+        self.assertEqual(result.saved, 1)
+        self.assertEqual(telegram_calls, [("https://t.me/semantic_news", 1)])
+        self.assertEqual(news_repository.created_article_data[0].direct_url, "https://t.me/semantic_news/42")
+
     def test_ingest_source_logs_failed_event_when_parser_fails(self) -> None:
         """Если parser падает, ingestion пишет событие ingestion_failed и пробрасывает ошибку."""
         logging_service = FakeLoggingService()
@@ -287,6 +313,35 @@ class IngestionServiceTest(unittest.TestCase):
         self.assertEqual([result.source_id for result in results], [5, 6])
         self.assertEqual([result.saved for result in results], [1, 1])
 
+    def test_ingest_active_sources_runs_sequentially_when_telegram_source_exists(self) -> None:
+        """Если среди источников есть Telegram, сбор временно идет последовательно с одним worker."""
+        html_source = build_fake_source()
+        telegram_source = build_fake_source(
+            source_id=6,
+            base_url="https://t.me/semantic_news",
+            source_type_code="telegram_channel",
+        )
+
+        service = IngestionService(
+            source_repository=FakeMultiSourceRepository([html_source, telegram_source]),
+            news_repository=FakeNewsRepository(created_ids=[201, 202]),
+            article_type_repository=FakeArticleTypeRepository(),
+            indexing_service=FakeIndexingService(),
+            logging_service=FakeLoggingService(),
+            sitemap_batch_parser=fake_source_aware_batch_parser,
+            telegram_parser=fake_source_aware_telegram_parser,
+        )
+        service._ingest_active_sources_in_parallel = fail_if_parallel_ingestion_is_used
+
+        results = service.ingest_active_sources(
+            max_workers=2,
+            max_articles_per_source=1,
+            batch_size=1,
+        )
+
+        self.assertEqual([result.source_id for result in results], [5, 6])
+        self.assertEqual([result.saved for result in results], [1, 1])
+
     def test_ingest_source_uses_write_lock_for_ingestion_writes(self) -> None:
         """Запись логов, статей, FAISS и checkpoint идет через общий lock."""
         write_lock = FakeWriteLock()
@@ -355,6 +410,7 @@ class FakeNewsRepository:
         self.created_ids = created_ids
         self.created_index = 0
         self.articles_count = articles_count
+        self.created_article_data = []
 
     def get_by_direct_url(self, direct_url: str):
         """В тесте считаем, что дублей нет."""
@@ -362,6 +418,7 @@ class FakeNewsRepository:
 
     def create(self, article_data) -> int:
         """Вернуть id созданной статьи без записи в SQLite."""
+        self.created_article_data.append(article_data)
         created_id = self.created_ids[self.created_index]
         self.created_index += 1
         return created_id
@@ -474,6 +531,36 @@ def fake_source_aware_batch_parser(sitemap_index_url: str, *args, **kwargs):
     ]
 
 
+def fake_source_aware_telegram_parser(channel: str, *args, **kwargs) -> list[ExtractedArticle]:
+    """Вернуть одну Telegram-статью для теста маршрутизации source_type."""
+    text = " ".join(["Содержательный текст Telegram-поста."] * 20)
+    return [
+        ExtractedArticle(
+            url=f"{channel}/42",
+            title="Telegram-пост",
+            text=text,
+            published_at=datetime(2026, 1, 1),
+            article_type_code="telegram_post",
+        )
+    ]
+
+
+def build_fake_telegram_parser(calls: list[tuple[str, int]]):
+    """Создать Telegram parser-заглушку, которая запоминает канал и limit."""
+
+    def fake_parser(channel: str, *, limit: int) -> list[ExtractedArticle]:
+        """Вернуть один Telegram-пост без обращения к Telegram API."""
+        calls.append((channel, limit))
+        return fake_source_aware_telegram_parser(channel, limit=limit)
+
+    return fake_parser
+
+
+def fail_if_parallel_ingestion_is_used(*args, **kwargs):
+    """Упасть, если Telegram-сбор ошибочно ушел в параллельную ветку."""
+    raise AssertionError("Telegram-источники пока должны собираться последовательно.")
+
+
 def fake_short_article_batch_parser(*args, **kwargs):
     """Вернуть статью с коротким текстом, похожим на служебный фрагмент страницы."""
     yield [
@@ -495,8 +582,11 @@ def build_fake_source(
     *,
     source_id: int = 5,
     base_url: str = "https://example.test/sitemap.xml",
+    source_type_code: str = "news_media",
 ) -> Source:
     """Собрать тестовый источник для сценариев ingestion."""
+    source_type = SourceType(code=source_type_code, name=source_type_code)
+    source_type.id = 1
     source = Source(
         source_type_id=1,
         base_url=base_url,
@@ -504,6 +594,7 @@ def build_fake_source(
         is_active=True,
     )
     source.id = source_id
+    source.source_type = source_type
     source.last_indexed_at = datetime(2026, 4, 29, 22, 49, 20)
     return source
 

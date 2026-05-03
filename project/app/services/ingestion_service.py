@@ -14,6 +14,7 @@ from app.models.dto import ArticleCreateDTO, ParsedArticleDTO
 from app.models.entities import Source
 from app.parsers import (
     ExtractedArticle,
+    collect_extracted_articles_from_telegram_channel,
     iter_extracted_article_batches_from_sitemap_index,
 )
 from app.repositories.article_type_repository import ArticleTypeRepository
@@ -68,6 +69,7 @@ class IngestionService:
         indexing_service: IndexingService | None = None,
         logging_service: LoggingService | None = None,
         sitemap_batch_parser: Callable[..., Iterable[list[ExtractedArticle]]] | None = None,
+        telegram_parser: Callable[..., list[ExtractedArticle]] | None = None,
         write_lock: AbstractContextManager | None = None,
     ) -> None:
         # Зависимости можно передать снаружи для тестов, а в обычном запуске сервис сам создает рабочие репозитории.
@@ -90,6 +92,12 @@ class IngestionService:
             sitemap_batch_parser
             if sitemap_batch_parser is not None
             else iter_extracted_article_batches_from_sitemap_index
+        )
+        # Telegram имеет отдельный parser-сценарий и не проходит через sitemap/html pipeline.
+        self.telegram_parser = (
+            telegram_parser
+            if telegram_parser is not None
+            else collect_extracted_articles_from_telegram_channel
         )
         # SQLite и FAISS/id_map остаются общими runtime-ресурсами, поэтому запись пачки сериализуем.
         self.write_lock = write_lock if write_lock is not None else Lock()
@@ -223,7 +231,7 @@ class IngestionService:
 
         # Репозиторий отвечает только за выборку активных источников, а сам сценарий сбора остается в сервисе.
         sources = self.source_repository.list_sources(only_active=True)
-        if max_workers == 1 or len(sources) <= 1:
+        if max_workers == 1 or len(sources) <= 1 or self._has_telegram_sources(sources):
             return self._ingest_active_sources_sequentially(
                 sources,
                 sitemap_limit=sitemap_limit,
@@ -357,8 +365,8 @@ class IngestionService:
 
             # Parser теперь отдает готовые статьи частями, чтобы длинная загрузка не ждала финала всего обхода.
             stop_after_published_at = None if ignore_last_indexed_at else source.last_indexed_at
-            for extracted_articles in self.sitemap_batch_parser(
-                source.base_url,
+            for extracted_articles in self._iter_extracted_article_batches(
+                source,
                 sitemap_limit=sitemap_limit,
                 max_articles=max_articles,
                 stop_after_published_at=stop_after_published_at,
@@ -404,6 +412,50 @@ class IngestionService:
         except Exception:
             self._log_source_event(source.id, "ingestion_failed")
             raise
+
+    def _iter_extracted_article_batches(
+        self,
+        source: Source,
+        *,
+        sitemap_limit: int,
+        max_articles: int,
+        stop_after_published_at: datetime | None,
+        batch_size: int,
+        article_request_delay_seconds: float,
+    ) -> Iterable[list[ExtractedArticle]]:
+        """Выбрать parser-сценарий по типу источника и вернуть статьи пачками."""
+        if self._is_telegram_source(source):
+            # Telegram читается через готовую Telethon session и не использует sitemap-настройки.
+            telegram_articles = self.telegram_parser(source.base_url, limit=max_articles)
+            yield from self._split_articles_into_batches(telegram_articles, batch_size)
+            return
+
+        yield from self.sitemap_batch_parser(
+            source.base_url,
+            sitemap_limit=sitemap_limit,
+            max_articles=max_articles,
+            stop_after_published_at=stop_after_published_at,
+            batch_size=batch_size,
+            article_request_delay_seconds=article_request_delay_seconds,
+        )
+
+    def _split_articles_into_batches(
+        self,
+        articles: list[ExtractedArticle],
+        batch_size: int,
+    ) -> Iterable[list[ExtractedArticle]]:
+        """Разбить список Telegram-постов на пачки для общего SQLite/FAISS-сценария."""
+        for start_index in range(0, len(articles), batch_size):
+            yield articles[start_index:start_index + batch_size]
+
+    def _has_telegram_sources(self, sources: list[Source]) -> bool:
+        """Проверить, есть ли среди источников Telegram-каналы."""
+        return any(self._is_telegram_source(source) for source in sources)
+
+    def _is_telegram_source(self, source: Source) -> bool:
+        """Определить Telegram-источник по коду справочника source_type."""
+        source_type = getattr(source, "source_type", None)
+        return getattr(source_type, "code", None) == "telegram_channel"
 
     def _to_parsed_article(
         self,
