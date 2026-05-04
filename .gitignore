@@ -29,6 +29,7 @@ project/instance/*.db
 project/instance/*.index
 project/instance/*.json
 project/instance/telegram/
+project/instance/evaluation/
 project/instance/*.session
 project/instance/*.session-journal
 
