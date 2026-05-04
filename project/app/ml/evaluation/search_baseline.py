@@ -253,10 +253,11 @@ def save_baseline_report(
     report: BaselineEvaluationReport,
     *,
     output_dir: Path = DEFAULT_EVALUATION_OUTPUT_DIR,
+    file_name: str = "baseline_current.json",
 ) -> Path:
     """Сохранить baseline-отчет в runtime-папку instance/evaluation."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "baseline_current.json"
+    output_path = output_dir / file_name
     output_path.write_text(
         json.dumps(_to_jsonable(report), ensure_ascii=False, indent=2),
         encoding="utf-8",
