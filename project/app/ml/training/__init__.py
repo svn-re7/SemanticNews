@@ -1,1 +1,1 @@
-"""Training workflows for adapting embedding models to news texts."""
+"""Инструменты подготовки данных и обучения embedding-модели."""

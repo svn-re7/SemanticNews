@@ -23,6 +23,8 @@ class Config:
     EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     # Каталог локально дообученной модели, которую провайдер сможет подхватить без смены остального кода.
     ADAPTED_EMBEDDING_MODEL_DIR = BASE_DIR / "instance" / "models" / "news-embeddings"
+    # Runtime-каталог для train/validation/test датасетов, собранных из локальной SQLite-базы.
+    ML_DATASET_DIR = BASE_DIR / "instance" / "ml_datasets"
 
     # Telegram runtime-файлы хранятся локально и не попадают в git.
     TELEGRAM_RUNTIME_DIR = BASE_DIR / "instance" / "telegram"
