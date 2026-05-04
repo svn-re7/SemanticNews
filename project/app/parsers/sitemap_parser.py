@@ -85,9 +85,11 @@ def collect_article_references(
         # но еще не ходим в HTML конкретных статей.
         article_references: list[ArticleReference] = []
         for sitemap_entry in sitemap_entries:
-            article_references.extend(
-                extract_article_references_from_sitemap(sitemap_entry.url, session=active_session)
+            sitemap_references = extract_article_references_from_sitemap(
+                sitemap_entry.url,
+                session=active_session,
             )
+            article_references.extend(_newest_references_first(sitemap_references))
             if len(article_references) >= max_articles:
                 break
 
@@ -136,7 +138,7 @@ def iter_extracted_article_batches_from_sitemap_index(
         extracted_count = 0
         has_requested_article = False
         for article_reference in article_references:
-            if _is_not_newer_than(article_reference.lastmod, stop_after_published_at):
+            if _is_reference_not_newer_than(article_reference.lastmod, stop_after_published_at):
                 old_articles_in_row += 1
                 if old_articles_in_row >= stop_after_old_articles:
                     # Sitemap у новостных сайтов обычно идет от свежих материалов к старым.
@@ -284,3 +286,65 @@ def _is_not_newer_than(candidate: datetime | None, threshold: datetime | None) -
         return False
 
     return candidate <= threshold
+
+
+def _is_reference_not_newer_than(candidate: datetime | None, threshold: datetime | None) -> bool:
+    """Проверить sitemap lastmod с учетом грубых дат без времени."""
+    if candidate is None or threshold is None:
+        return False
+
+    if _is_date_only_on_threshold_day(candidate, threshold):
+        # У некоторых сайтов sitemap lastmod содержит только день без времени.
+        # Для текущего дня такая дата слишком грубая: точное published_at нужно взять из HTML.
+        return False
+
+    return candidate <= threshold
+
+
+def _newest_references_first(article_references: list[ArticleReference]) -> list[ArticleReference]:
+    """Развернуть sitemap-ссылки, если конкретный sitemap идет от старых материалов к новым."""
+    dated_references = [reference for reference in article_references if reference.lastmod is not None]
+    if len(dated_references) < 2:
+        return article_references
+
+    if _looks_like_old_to_new_sitemap(dated_references):
+        # Например, у Известий актуальный sitemap last/xml в целом идет от старых URL к новым,
+        # хотя внутри файла возможны локальные скачки дат.
+        return list(reversed(article_references))
+
+    return article_references
+
+
+def _looks_like_old_to_new_sitemap(article_references: list[ArticleReference]) -> bool:
+    """Проверить по краям файла, что sitemap скорее идет от старых ссылок к новым."""
+    edge_size = min(20, len(article_references))
+    if len(article_references) <= edge_size * 2:
+        first_lastmod = article_references[0].lastmod
+        last_lastmod = article_references[-1].lastmod
+        return first_lastmod is not None and last_lastmod is not None and last_lastmod > first_lastmod
+
+    first_edge_dates = [
+        reference.lastmod
+        for reference in article_references[:edge_size]
+        if reference.lastmod is not None
+    ]
+    last_edge_dates = [
+        reference.lastmod
+        for reference in article_references[-edge_size:]
+        if reference.lastmod is not None
+    ]
+    if not first_edge_dates or not last_edge_dates:
+        return False
+
+    return max(last_edge_dates) > max(first_edge_dates)
+
+
+def _is_date_only_on_threshold_day(candidate: datetime, threshold: datetime) -> bool:
+    """Проверить, похожа ли дата sitemap на день без точного времени для текущего checkpoint."""
+    return (
+        candidate.date() == threshold.date()
+        and candidate.hour == 0
+        and candidate.minute == 0
+        and candidate.second == 0
+        and candidate.microsecond == 0
+    )

@@ -11,7 +11,10 @@ PROJECT_DIR = Path(__file__).resolve().parents[1] / "project"
 sys.path.insert(0, str(PROJECT_DIR))
 
 from app.parsers.parser_models import ArticleReference, ExtractedArticle, SitemapEntry  # noqa: E402
-from app.parsers.sitemap_parser import iter_extracted_article_batches_from_sitemap_index  # noqa: E402
+from app.parsers.sitemap_parser import (  # noqa: E402
+    collect_article_references,
+    iter_extracted_article_batches_from_sitemap_index,
+)
 
 
 class SitemapParserTest(unittest.TestCase):
@@ -101,6 +104,60 @@ class SitemapParserTest(unittest.TestCase):
 
         self.assertEqual(sleep_calls, [0.5, 0.5])
 
+    def test_collect_article_references_reverses_old_to_new_sitemap_order(self) -> None:
+        """Sitemap со ссылками от старых к новым разворачивается перед дальнейшим обходом."""
+        references = [
+            ArticleReference(url="https://example.test/old", lastmod=datetime(2026, 1, 1)),
+            ArticleReference(url="https://example.test/middle", lastmod=datetime(2026, 1, 2)),
+            ArticleReference(url="https://example.test/new", lastmod=datetime(2026, 1, 3)),
+        ]
+
+        with patch(
+            "app.parsers.sitemap_parser.extract_article_references_from_sitemap",
+            return_value=references,
+        ):
+            collected = collect_article_references(
+                [SitemapEntry(url="https://example.test/sitemap.xml")],
+                max_articles=3,
+            )
+
+        self.assertEqual(
+            [reference.url for reference in collected],
+            [
+                "https://example.test/new",
+                "https://example.test/middle",
+                "https://example.test/old",
+            ],
+        )
+
+    def test_date_only_lastmod_on_checkpoint_day_is_checked_by_article_date(self) -> None:
+        """Date-only lastmod за день checkpoint не должен останавливать parser до чтения HTML."""
+        references = [
+            ArticleReference(url="https://example.test/same-day", lastmod=datetime(2026, 1, 3)),
+        ]
+
+        with (
+            patch(
+                "app.parsers.sitemap_parser.extract_sitemap_entries",
+                return_value=[SitemapEntry(url="https://example.test/sitemap.xml")],
+            ),
+            patch("app.parsers.sitemap_parser.collect_article_references", return_value=references),
+            patch(
+                "app.parsers.sitemap_parser.extract_article",
+                side_effect=fake_extract_same_day_new_article,
+            ) as extract_mock,
+        ):
+            batches = list(
+                iter_extracted_article_batches_from_sitemap_index(
+                    "https://example.test/sitemap-index.xml",
+                    stop_after_published_at=datetime(2026, 1, 3, 12, 0),
+                )
+            )
+
+        articles = [article for batch in batches for article in batch]
+        self.assertEqual([article.url for article in articles], ["https://example.test/same-day"])
+        self.assertEqual(extract_mock.call_count, 1)
+
 
 def fake_extract_article(url: str, **kwargs) -> ExtractedArticle:
     """Вернуть тестовую статью по ссылке без сетевого запроса."""
@@ -109,6 +166,16 @@ def fake_extract_article(url: str, **kwargs) -> ExtractedArticle:
         title="Новая статья",
         text="Текст статьи",
         published_at=datetime(2026, 1, 3),
+    )
+
+
+def fake_extract_same_day_new_article(url: str, **kwargs) -> ExtractedArticle:
+    """Вернуть статью, которая новее checkpoint внутри того же календарного дня."""
+    return ExtractedArticle(
+        url=url,
+        title="Новая статья",
+        text="Текст статьи",
+        published_at=datetime(2026, 1, 3, 13, 0),
     )
 
 
