@@ -1,12 +1,25 @@
 from __future__ import annotations
 
+import re
 from urllib.parse import urlparse
 
 
 # В этом модуле оставляем только легкие правила,
 # которые не относятся к извлечению текста и даты.
-def normalize_whitespace(text: str) -> str:
+def normalize_whitespace(text: str, *, preserve_newlines: bool = False) -> str:
     """Нормализовать пробелы и переносы строк в текстовом фрагменте."""
+    # Убираем служебные подсказки и рекламные deep-link ссылки, которые попадают в текст статьи.
+    text = re.sub(r"\[[^\]]+\]", " ", text)
+    text = re.sub(r"\(\s*https?://[^)\s]+[^)]*\)", " ", text)
+    # Markdown-разметка из Telegram и некоторых HTML-фрагментов не должна попадать в embeddings.
+    text = text.replace("**", "")
+    if preserve_newlines:
+        # Для Telegram сохраняем границу первой строки, потому что из нее строится UI-заголовок.
+        return "\n".join(
+            normalized_line
+            for line in text.splitlines()
+            if (normalized_line := " ".join(line.split()).strip())
+        )
     return " ".join(text.split()).strip()
 
 

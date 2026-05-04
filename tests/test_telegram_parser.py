@@ -69,6 +69,23 @@ class TelegramParserTest(unittest.TestCase):
         self.assertIsNotNone(article)
         self.assertEqual(article.published_at, datetime(2026, 5, 1, 12, 30))
 
+    def test_normalize_message_removes_service_markup_from_text(self) -> None:
+        """Telegram parser убирает служебные вставки, ссылки и markdown-разметку из текста."""
+        message = FakeMessage(
+            id=42,
+            text=(
+                "Заголовок **поста** [в приложении.]\n"
+                "Подробнее (https://plms.adj.st/r/example) в тексте."
+            ),
+            date=datetime(2026, 5, 1, 12, 30),
+        )
+
+        article = normalize_telegram_message("semantic_news", message)
+
+        self.assertIsNotNone(article)
+        self.assertEqual(article.title, "Заголовок поста")
+        self.assertEqual(article.text, "Заголовок поста\nПодробнее в тексте.")
+
     def test_collect_reads_config_connects_client_and_returns_articles(self) -> None:
         """Parser читает локальный config, подключает клиента и возвращает Telegram-посты."""
         with tempfile.TemporaryDirectory() as temp_dir:

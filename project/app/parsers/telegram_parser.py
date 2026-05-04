@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from app.config import Config
 from app.parsers.parser_models import ExtractedArticle
+from app.parsers.source_adapters import normalize_whitespace
 
 
 ClientFactory = Callable[..., Any]
@@ -189,7 +190,7 @@ async def _collect_async_generator(async_generator: Any) -> list[Any]:
 def _extract_message_text(message: Any) -> str:
     """Достать текст Telegram-сообщения из распространенных полей Telethon."""
     raw_text = getattr(message, "text", None) or getattr(message, "message", None) or ""
-    return str(raw_text).strip()
+    return normalize_whitespace(str(raw_text), preserve_newlines=True)
 
 
 def _to_naive_utc(value: datetime | None) -> datetime | None:

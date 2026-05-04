@@ -67,15 +67,18 @@ class IngestionControllerTest(unittest.TestCase):
     def test_background_task_uses_scheduled_ingestion(self) -> None:
         """Фоновая задача запускает умный initial/incremental сценарий ingestion."""
         original_service = ingestion_controller.IngestionService
+        original_repository = ingestion_controller.SourceRepository
         fake_service = FakeScheduledIngestionService
         fake_service.was_called = False
 
         try:
             ingestion_controller.IngestionService = fake_service
+            ingestion_controller.SourceRepository = FakeEmptySourceRepository
             ingestion_controller._run_ingestion_task()
             payload = ingestion_controller._serialize_state()
         finally:
             ingestion_controller.IngestionService = original_service
+            ingestion_controller.SourceRepository = original_repository
             reset_ingestion_state()
 
         self.assertTrue(fake_service.was_called)
@@ -231,6 +234,14 @@ class FakeSourceRepository:
     def list_sources(self, *, only_active: bool = False) -> list[FakeSource]:
         """Вернуть источник с именем, как будто он прочитан из БД."""
         return [FakeSource()]
+
+
+class FakeEmptySourceRepository:
+    """Подменный репозиторий без источников, чтобы тест не зависел от локальной SQLite."""
+
+    def list_sources(self, *, only_active: bool = False) -> list[FakeSource]:
+        """Вернуть пустой список источников."""
+        return []
 
 
 class FakeThread:
