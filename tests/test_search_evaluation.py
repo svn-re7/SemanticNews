@@ -18,6 +18,11 @@ from app.ml.evaluation.search_baseline import (  # noqa: E402
     calculate_query_metrics,
     resolve_current_embedding_model_name,
 )
+from app.ml.evaluation.holdout_retrieval import (  # noqa: E402
+    HoldoutCandidate,
+    calculate_holdout_metrics,
+    load_holdout_items,
+)
 from app.ml.evaluation.model_comparison import (  # noqa: E402
     comparison_models,
     evaluate_embedding_model,
@@ -64,6 +69,39 @@ class FakeEmbeddingService:
 
 
 class SearchEvaluationTest(unittest.TestCase):
+    def test_calculate_holdout_metrics_uses_own_article_rank(self) -> None:
+        """Holdout-метрики считаются по позиции текста той же статьи в выдаче."""
+        candidates = [
+            HoldoutCandidate(article_id=10, found_article_ids=[20, 10, 30]),
+            HoldoutCandidate(article_id=20, found_article_ids=[20, 10, 30]),
+            HoldoutCandidate(article_id=30, found_article_ids=[10, 20, 40]),
+        ]
+
+        metrics = calculate_holdout_metrics(candidates)
+
+        self.assertEqual(metrics.items_count, 3)
+        self.assertEqual(metrics.hit_at_1, 1 / 3)
+        self.assertEqual(metrics.hit_at_3, 2 / 3)
+        self.assertEqual(metrics.hit_at_5, 2 / 3)
+        self.assertEqual(metrics.hit_at_10, 2 / 3)
+        self.assertAlmostEqual(metrics.mean_mrr, (0.5 + 1.0 + 0.0) / 3)
+
+    def test_load_holdout_items_reads_jsonl_pairs(self) -> None:
+        """Holdout evaluator читает article_id, query и positive из test.jsonl."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "test.jsonl"
+            path.write_text(
+                '{"article_id": 10, "query": "Заголовок", "positive": "Текст"}\n',
+                encoding="utf-8",
+            )
+
+            items = load_holdout_items(path)
+
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0].article_id, 10)
+            self.assertEqual(items[0].query, "Заголовок")
+            self.assertEqual(items[0].positive, "Текст")
+
     def test_resolve_current_embedding_model_name_prefers_adapted_model_dir(self) -> None:
         """Baseline-отчет должен явно показывать локальную adapted-модель, если она уже есть."""
         with tempfile.TemporaryDirectory() as temp_dir:
