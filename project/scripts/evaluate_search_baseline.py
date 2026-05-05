@@ -10,6 +10,7 @@ sys.path.insert(0, str(PROJECT_DIR))
 from app.ml.evaluation.search_baseline import (  # noqa: E402
     SearchBaselineEvaluator,
     load_evaluation_queries,
+    resolve_current_embedding_model_name,
     save_baseline_report,
 )
 
@@ -21,6 +22,7 @@ def main() -> None:
         queries,
         top_k=5,
         active_only=False,
+        model_name=resolve_current_embedding_model_name(),
     )
     output_path = save_baseline_report(report)
 

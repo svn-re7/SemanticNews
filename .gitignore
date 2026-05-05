@@ -31,6 +31,7 @@ project/instance/*.json
 project/instance/telegram/
 project/instance/evaluation/
 project/instance/ml_datasets/
+project/instance/models/
 project/instance/*.session
 project/instance/*.session-journal
 

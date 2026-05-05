@@ -16,6 +16,7 @@ from app.ml.evaluation.search_baseline import (  # noqa: E402
     EvaluationQuery,
     EvaluationResultItem,
     calculate_query_metrics,
+    resolve_current_embedding_model_name,
 )
 from app.ml.evaluation.model_comparison import (  # noqa: E402
     comparison_models,
@@ -63,6 +64,20 @@ class FakeEmbeddingService:
 
 
 class SearchEvaluationTest(unittest.TestCase):
+    def test_resolve_current_embedding_model_name_prefers_adapted_model_dir(self) -> None:
+        """Baseline-отчет должен явно показывать локальную adapted-модель, если она уже есть."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            adapted_model_dir = Path(temp_dir) / "news-embeddings"
+            adapted_model_dir.mkdir()
+
+            self.assertEqual(
+                resolve_current_embedding_model_name(
+                    base_model_name="base/model",
+                    adapted_model_dir=adapted_model_dir,
+                ),
+                str(adapted_model_dir),
+            )
+
     def test_comparison_models_uses_defaults_without_explicit_models(self) -> None:
         """Без явного списка evaluation сравнивает текущую модель и эталонные кандидаты."""
         models = comparison_models([])

@@ -89,6 +89,17 @@ def load_evaluation_queries(path: Path = DEFAULT_EVALUATION_QUERIES_PATH) -> lis
     return queries
 
 
+def resolve_current_embedding_model_name(
+    *,
+    base_model_name: str = Config.EMBEDDING_MODEL_NAME,
+    adapted_model_dir: Path = Config.ADAPTED_EMBEDDING_MODEL_DIR,
+) -> str:
+    """Вернуть имя фактически используемой embedding-модели для baseline-отчета."""
+    if adapted_model_dir.exists():
+        return str(adapted_model_dir)
+    return base_model_name
+
+
 def calculate_query_metrics(items: list[EvaluationResultItem]) -> QueryMetrics:
     """Посчитать hit@k и MRR для одного eval-запроса."""
     first_hit_rank = None
