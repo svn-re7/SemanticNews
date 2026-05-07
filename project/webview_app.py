@@ -9,6 +9,7 @@ import urllib.request
 import webview
 
 from app.controllers.ingestion_controller import start_auto_ingestion_if_needed
+from app.services.ingestion_scheduler import start_ingestion_scheduler
 from run import app
 
 
@@ -58,6 +59,8 @@ def run_flask(host: str, port: int) -> None:
     """Запустить Flask-сервер для desktop-окна."""
     # Desktop-запуск тоже должен проверять свежесть новостей, но без блокировки окна приложения.
     start_auto_ingestion_if_needed()
+    # После стартовой проверки включаем периодический scheduler на все время работы desktop-приложения.
+    start_ingestion_scheduler(start_auto_ingestion_if_needed)
     app.run(host=host, port=port, debug=False, use_reloader=False)
 
 

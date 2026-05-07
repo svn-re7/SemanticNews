@@ -1,5 +1,6 @@
 from app import create_app
 from app.controllers.ingestion_controller import start_auto_ingestion_if_needed
+from app.services.ingestion_scheduler import start_ingestion_scheduler
 
 
 app = create_app()
@@ -8,4 +9,6 @@ app = create_app()
 if __name__ == "__main__":
     # Автообновление запускается только в реальной точке входа, чтобы импорт app в тестах не стартовал сеть.
     start_auto_ingestion_if_needed()
+    # В обычном dev-запуске тоже держим периодическую проверку, но без Flask reloader, чтобы не создать два scheduler-а.
+    start_ingestion_scheduler(start_auto_ingestion_if_needed)
     app.run(debug=True, use_reloader=False)

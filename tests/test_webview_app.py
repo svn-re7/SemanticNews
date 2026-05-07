@@ -5,6 +5,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1] / "project"
@@ -36,6 +37,21 @@ class WebviewAppTest(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
+
+    def test_run_flask_starts_periodic_ingestion_scheduler(self) -> None:
+        """Desktop entrypoint должен включать периодический scheduler автообновления."""
+        import webview_app  # noqa: PLC0415
+
+        with (
+            patch.object(webview_app, "start_auto_ingestion_if_needed") as start_auto,
+            patch.object(webview_app, "start_ingestion_scheduler") as start_scheduler,
+            patch.object(webview_app.app, "run") as app_run,
+        ):
+            webview_app.run_flask("127.0.0.1", 5010)
+
+        start_auto.assert_called_once_with()
+        start_scheduler.assert_called_once_with(start_auto)
+        app_run.assert_called_once_with(host="127.0.0.1", port=5010, debug=False, use_reloader=False)
 
 
 class HealthHandler(BaseHTTPRequestHandler):
