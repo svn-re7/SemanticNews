@@ -70,6 +70,38 @@ class TelegramAuthServiceTest(unittest.TestCase):
         self.assertTrue(status.has_config)
         self.assertFalse(status.is_authorized)
 
+    def test_get_status_does_not_create_client_by_default_when_session_exists(self) -> None:
+        """Рендер формы Telegram не должен открывать сетевое подключение для проверки session."""
+        self.config_path.write_text(json.dumps({"api_id": 12345, "api_hash": "hash-value"}), encoding="utf-8")
+        self.session_path.write_text("session-placeholder", encoding="utf-8")
+        service = TelegramAuthService(
+            config_path=self.config_path,
+            session_path=self.session_path,
+            client_factory=failing_client_factory,
+            password_error_class=FakePasswordRequired,
+        )
+
+        status = service.get_status()
+
+        self.assertTrue(status.has_config)
+        self.assertFalse(status.is_authorized)
+
+    def test_get_status_can_check_remote_session_explicitly(self) -> None:
+        """Сетевую проверку Telegram session запускаем только явно."""
+        self.config_path.write_text(json.dumps({"api_id": 12345, "api_hash": "hash-value"}), encoding="utf-8")
+        self.session_path.write_text("session-placeholder", encoding="utf-8")
+        service = TelegramAuthService(
+            config_path=self.config_path,
+            session_path=self.session_path,
+            client_factory=AuthorizedTelegramClient,
+            password_error_class=FakePasswordRequired,
+        )
+
+        status = service.get_status(check_remote=True)
+
+        self.assertTrue(status.has_config)
+        self.assertTrue(status.is_authorized)
+
     def test_request_code_creates_session_directory_before_telethon_client(self) -> None:
         """Перед созданием Telethon-клиента сервис создает папку для SQLite session."""
         missing_dir_session_path = self.runtime_dir / "missing" / "semanticnews.session"
@@ -245,6 +277,18 @@ class FakeTelegramClient:
             return
         if type(self).require_password:
             raise FakePasswordRequired()
+
+    async def is_user_authorized(self) -> bool:
+        """По умолчанию fake session не считается авторизованной."""
+        return False
+
+
+class AuthorizedTelegramClient(FakeTelegramClient):
+    """Fake-клиент с авторизованной session для явной проверки статуса."""
+
+    async def is_user_authorized(self) -> bool:
+        """Имитировать успешно авторизованную Telegram session."""
+        return True
 
 
 class DirectoryCheckingTelegramClient(FakeTelegramClient):

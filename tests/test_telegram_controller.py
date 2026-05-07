@@ -67,6 +67,16 @@ class TelegramControllerTest(unittest.TestCase):
         self.assertEqual(fake_service.confirmed_code, "11111")
         self.assertIn("авторизация сохранена", response.text)
 
+    def test_check_session_uses_remote_status_check(self) -> None:
+        """Отдельная кнопка проверки session явно запускает сетевую проверку Telethon."""
+        fake_service = FakeTelegramAuthService()
+
+        with patch("app.controllers.telegram_controller.TelegramAuthService", return_value=fake_service):
+            response = self.client.post("/telegram/auth/check-session")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(fake_service.remote_status_checked)
+
 
 @dataclass(slots=True)
 class FakeStatus:
@@ -91,9 +101,13 @@ class FakeTelegramAuthService:
     def __init__(self) -> None:
         self.requested_code: tuple[str, str, str, str | None, str, str, str] | None = None
         self.confirmed_code: str | None = None
+        self.remote_status_checked = False
 
-    def get_status(self) -> FakeStatus:
+    def get_status(self, *, check_remote: bool = False) -> FakeStatus:
         """Вернуть fake-статус без подключения к Telegram."""
+        self.remote_status_checked = check_remote
+        if check_remote:
+            return FakeStatus(has_config=True, is_authorized=True)
         return FakeStatus()
 
     def request_code(

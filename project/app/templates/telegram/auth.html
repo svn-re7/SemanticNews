@@ -17,9 +17,12 @@
         </div>
     {% elif status.has_config %}
         <div class="alert alert-warning">
-            Config найден, но session пока не подтверждена.
+            Config и session-файл найдены, но удаленная проверка session не выполнялась при открытии страницы.
             {% if status.error %}<div class="small mt-1">{{ status.error }}</div>{% endif %}
         </div>
+        <form class="mb-4" method="post" action="{{ url_for('telegram.check_telegram_session') }}">
+            <button class="btn btn-outline-secondary" type="submit">Проверить Telegram session</button>
+        </form>
     {% endif %}
 
     {% if result %}

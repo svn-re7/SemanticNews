@@ -14,6 +14,14 @@ def telegram_auth_page():
     return _render_auth_page()
 
 
+@telegram_bp.post("/auth/check-session")
+def check_telegram_session():
+    """Явно проверить Telegram session через Telethon по кнопке пользователя."""
+    service = TelegramAuthService()
+    status = service.get_status(check_remote=True)
+    return _render_auth_page(status=status)
+
+
 @telegram_bp.post("/auth/request-code")
 def request_telegram_code():
     """Отправить код подтверждения Telegram на телефон пользователя."""
@@ -61,6 +69,7 @@ def confirm_telegram_password():
 
 def _render_auth_page(
     *,
+    status=None,
     result: TelegramAuthResult | None = None,
     error_message: str | None = None,
     show_code_form: bool = False,
@@ -68,7 +77,8 @@ def _render_auth_page(
 ):
     """Подготовить данные страницы Telegram-авторизации для шаблона."""
     service = TelegramAuthService()
-    status = service.get_status()
+    if status is None:
+        status = service.get_status()
     return render_template(
         "telegram/auth.html",
         status=status,

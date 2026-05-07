@@ -72,11 +72,14 @@ class TelegramAuthService:
             password_error_class if password_error_class is not None else self._load_password_error_class()
         )
 
-    def get_status(self) -> TelegramAuthStatus:
+    def get_status(self, *, check_remote: bool = False) -> TelegramAuthStatus:
         """Проверить, есть ли config и авторизована ли локальная Telethon session."""
         if not self.config_path.exists():
             return TelegramAuthStatus(has_config=False, is_authorized=False)
         if not self.session_path.exists():
+            return TelegramAuthStatus(has_config=True, is_authorized=False)
+        if not check_remote:
+            # Обычный рендер формы не должен зависеть от сети или proxy: session-файл проверяем отдельно.
             return TelegramAuthStatus(has_config=True, is_authorized=False)
 
         try:
