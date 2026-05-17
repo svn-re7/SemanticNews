@@ -22,6 +22,12 @@ build/
 dist/
 *.egg-info/
 
+# Local tests and project notes
+tests/
+report_agent/
+*.md
+!/README.md
+
 # Runtime data
 project/instance/app.db
 project/instance/news.index
