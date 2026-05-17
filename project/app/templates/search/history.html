@@ -8,7 +8,7 @@
         <div>
             <h1 class="h3 mb-2">История поиска</h1>
             <p class="text-muted mb-0">
-                Здесь показаны последние сохраненные запросы. Переход открывает уже готовую выдачу без повторного FAISS-поиска.
+                Здесь показаны последние сохраненные запросы. Переход откроет уже готовую выдачу.
             </p>
         </div>
         <a class="btn btn-outline-primary" href="{{ url_for('search.search_page') }}">Новый поиск</a>
@@ -25,7 +25,6 @@
                         <h2 class="h5 mb-1">{{ item.query_text }}</h2>
                         <small class="text-muted text-nowrap">{{ item.executed_at.strftime("%d.%m.%Y %H:%M") }}</small>
                     </div>
-                    <div class="text-secondary small">request_id={{ item.request_id }}</div>
                 </a>
             {% endfor %}
         </div>

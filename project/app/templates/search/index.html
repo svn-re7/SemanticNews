@@ -8,8 +8,7 @@
         <div>
             <h1 class="h3 mb-2">Семантический поиск</h1>
             <p class="text-muted mb-0">
-                Введите запрос обычным языком. Приложение построит embedding запроса, найдет близкие статьи в FAISS
-                и вернет полные данные из SQLite.
+                Введите запрос обычным языком. Приложение подберет новости, которые лучше всего подходят по смыслу.
             </p>
         </div>
         <a class="btn btn-outline-secondary" href="{{ url_for('search.search_history') }}">История</a>
@@ -40,7 +39,6 @@
     {% if search_result %}
         <div class="d-flex align-items-center justify-content-between mb-3">
             <h2 class="h5 mb-0">Результаты по запросу «{{ search_result.query_text }}»</h2>
-            <span class="text-muted small">request_id={{ search_result.request_id }}</span>
         </div>
 
         {% if search_result.items %}
@@ -56,7 +54,16 @@
                         </div>
                         <div class="d-flex flex-wrap gap-3 text-secondary small">
                             <span>{{ item.source_name }}</span>
-                            <span>relevance={{ "%.4f"|format(item.relevance) }}</span>
+                            <span>
+                                Релевантность:
+                                {% if item.relevance >= 0.7 %}
+                                    высокая
+                                {% elif item.relevance >= 0.5 %}
+                                    средняя
+                                {% else %}
+                                    низкая
+                                {% endif %}
+                            </span>
                         </div>
                     </a>
                 {% endfor %}

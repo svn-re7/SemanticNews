@@ -7,7 +7,7 @@
     <div class="mb-4">
         <h1 class="h3 mb-2">Источники</h1>
         <p class="text-muted mb-0">
-            Управляйте источниками новостей: добавляйте sitemap/RSS URL, выбирайте тип и включайте только нужные источники.
+            Управляйте источниками новостей: добавляйте адреса сайтов, выбирайте тип и включайте только нужные источники.
         </p>
     </div>
 
@@ -23,8 +23,8 @@
                 <input class="form-control" id="source-name" name="name" placeholder="Например: РИА Новости">
             </div>
             <div class="col-md-5">
-                <label class="form-label" for="source-url">URL</label>
-                <input class="form-control" id="source-url" name="base_url" required placeholder="https://example.test/sitemap.xml">
+                <label class="form-label" for="source-url">Адрес источника</label>
+                <input class="form-control" id="source-url" name="base_url" required placeholder="https://example.test/news">
             </div>
             <div class="col-md-3">
                 <label class="form-label" for="source-type">Тип</label>
@@ -47,7 +47,7 @@
                     <tr>
                         <th>Название</th>
                         <th>Тип</th>
-                        <th>URL</th>
+                        <th>Адрес</th>
                         <th>Последний сбор</th>
                         <th>Активность</th>
                         <th>Удаление</th>
@@ -95,7 +95,7 @@
         </div>
     {% else %}
         <div class="alert alert-secondary">
-            Источники еще не добавлены. Запустите seed или добавьте источник вручную.
+            Источники еще не добавлены. Добавьте первый источник вручную.
         </div>
     {% endif %}
 </section>

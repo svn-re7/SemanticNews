@@ -65,7 +65,9 @@ class SearchControllerTest(unittest.TestCase):
         self.assertIn("/news/10", response.text)
         self.assertIn("return_to=search", response.text)
         self.assertIn("request_id=15", response.text)
-        self.assertIn("0.9100", response.text)
+        self.assertIn("Релевантность", response.text)
+        self.assertIn("высокая", response.text)
+        self.assertNotIn("0.9100", response.text)
 
     def test_saved_results_page_uses_request_id_without_new_search(self) -> None:
         """Страница сохраненной выдачи читает результаты по request_id без нового поиска."""
